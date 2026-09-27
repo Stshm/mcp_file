@@ -1,0 +1,37 @@
+# Native Windows build for an MSYS2 MINGW64 or UCRT64 shell.
+# MINGW64: pacman -S --needed mingw-w64-x86_64-{gcc,json-c,curl,pkgconf}
+# UCRT64:  pacman -S --needed mingw-w64-ucrt-x86_64-{gcc,json-c,curl,pkgconf}
+
+CC ?= gcc
+AR ?= ar
+PKG_CONFIG ?= pkg-config
+CPPFLAGS += -D_WIN32_WINNT=0x0A00 -DUNICODE -D_UNICODE -Imcp_lib
+CFLAGS += -std=gnu11 -Wall -Wextra -O2 -g
+CFLAGS += $(shell $(PKG_CONFIG) --cflags json-c libcurl)
+LDLIBS += $(shell $(PKG_CONFIG) --libs json-c libcurl)
+LDLIBS += -luserenv -ladvapi32
+
+CORE_SRCS = mcp_lib/mcp_transport.c mcp_lib/mcp_sandbox.c \
+            mcp_lib/mcp_path.c mcp_lib/mcp_fs.c mcp_lib/mcp_time.c
+SERVER_SRCS = mcp_json_rpc.c mcp_utils.c mcp_tools_file.c mcp_tools_dir.c \
+              mcp_tools_misc.c mcp_tools_cmd.c mcp_server.c mcp_main.c
+SRCS = $(CORE_SRCS) $(SERVER_SRCS)
+OBJS = $(SRCS:.c=.win.o)
+OBJS += mcpsv_file.res.o
+TARGET = mcpsv_file.exe
+
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
+
+%.win.o: %.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+mcpsv_file.res.o: mcpsv_file.rc mcpsv_file.exe.manifest
+	windres -i $< -o $@
+
+clean:
+	rm -f $(OBJS) $(TARGET)
+
+.PHONY: all clean

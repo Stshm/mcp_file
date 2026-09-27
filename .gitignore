@@ -1,0 +1,16 @@
+# Build outputs
+*.o
+*.a
+*.win.o
+*.res.o
+*.dll
+/mcpsv_file.exe
+/mcpsv_file
+/run_tests
+/coverage_html/
+/coverage.info
+/smoke-root/
+
+# Local settings and editing history
+/mcp_config.json
+/.history/

@@ -1,0 +1,205 @@
+
+このディレクトリは MCP file server の独立した Git リポジトリです。
+共通ライブラリは隣の `../mcp_lib` リポジトリで管理し、このリポジトリでは
+その使用中ソース一式を `mcp_lib/` に複製して一緒に記録します。
+ビルドもこの複製を参照するため、`mcp_file` は単独でチェックアウトしてビルドできます。
+
+`mcp_lib` の更新を取り込むときは、隣の `mcp_lib` で変更を取得・確定した後に
+ソース一式を `mcp_file/mcp_lib/` へ同期し、`mcp_file` 側でも変更を確定してください。
+
+（起動方法）
+
+./mcpsv_file --root_dir /path/to/root --config /path/to/mcp_config.json
+
+LMStudioでの設定例:
+
+{
+  "mcpServers": {
+    "localFile": {
+      "command": "/path/to/mcpsv_file",
+      "args": [
+        "-r",
+        "/path/to/root"
+      ]
+    }
+  }
+}
+
+短縮形:
+
+./mcpsv_file -r /path/to/root -c /path/to/mcp_config.json
+
+（Windows）
+
+MSYS2 の MINGW64 または UCRT64 シェルで json-c と libcurl の開発パッケージを
+導入し、次でネイティブ版をビルドします。シェルとパッケージ接頭辞を混在させないでください。
+
+```sh
+# MINGW64
+pacman -S --needed mingw-w64-x86_64-{gcc,json-c,curl,pkgconf}
+
+# UCRT64 の場合はこちら
+pacman -S --needed mingw-w64-ucrt-x86_64-{gcc,json-c,curl,pkgconf}
+```
+
+```sh
+make -f Makefile.windows
+```
+
+起動例:
+
+```powershell
+.\mcpsv_file.exe -r "C:\Users\me\Documents\mcp-root"
+```
+
+クライアントへ渡すパス表現は OS に関係なく `/notes/example.md` です。
+Windows の `C:\...`、UNC、NTFS 代替データストリームは MCP パスとして受け付けません。
+入力中の `\` は区切りとして正規化します。内部では UTF-8 と UTF-16 を変換し、
+`GetFinalPathNameByHandleW` でジャンクション／シンボリックリンク解決後のパスが指定ルート内か
+検証します。AppContainerが完全パスの逆引きを拒否する場合は、絶対パス化とルート配下の
+各要素の属性検査へ切り替えます。ディレクトリ走査時は reparse point をたどりません。
+`--root_dir` はOSネイティブの設定値です。Windows AppContainer版ではローカルドライブ上の
+ディレクトリだけを指定できます。UNC共有およびネットワークドライブは、AppContainerの
+SMB資格情報・ネットワーク分離により利用できないため、明示的に非対応です。必要なデータは
+ローカルディレクトリへ同期して、そのディレクトリをルートにしてください。
+
+AppContainerがロードする `mcpsv_file.exe` とMinGW依存DLLもローカルディスクへ配置して
+ください。ネットワーク共有やネットワークドライブから直接起動すると、Windows loaderが
+`STATUS_NETWORK_OPEN_RESTRICTION (0xC0000201)` で子プロセスを終了させる場合があります。
+
+Windows 版の初回起動では、ルートごとの AppContainer profile を作成し、その SID に
+ルートの読み書き権限（既存の子へ継承）、実行ファイル配置先の読み取り・実行権限を ACL で
+追加します。この ACE は終了後も残ります。`download_file` 用に outbound Internet capability
+を付与します。ネットワーク共有用のprivate-networkおよびenterprise-authentication
+capabilityは付与しません。それ以外のファイル、レジストリ、プロセス資源は AppContainer の既定拒否に
+従います。明示指定した設定ファイルがルート外にある場合は、そのファイルだけ読み取りを許可します。
+
+既知の Windows 問題: 一部の環境では、localFile の AppContainer が稼働中に、この
+ルートまたは継承先フォルダーのプロパティで「セキュリティ」タブを開くと Explorer が
+終了することがあります。停止中には再現しないことを確認しています。権限確認が必要な
+場合は、先に localFile を停止するか、読み取り専用の `icacls` を使用してください。
+ACL に追加する SID はルート固有の AppContainer profile を識別し、最小権限分離に必要です。
+回避目的で `ALL APPLICATION PACKAGES` (`S-1-15-2-1`) に置き換えないでください。
+それを行うと、他のパッケージアプリにもルートへのアクセスを許す可能性があります。
+
+生成物には UTF-8 active code page と long-path-aware manifest が埋め込まれます。
+Windows 10 以降の x64 を対象とします。
+
+ルートを省略した場合は MCP_ROOT_DIR 環境変数、未設定ならカレントディレクトリを使用します。
+設定ファイルを省略した場合は、ルート直下の mcp_config.json を使用します。
+位置引数によるルート指定はサポートしません。
+
+（注意事項）
+ダウンロード機能:
+サーバ起動中はルートパスが変更されるので、リゾルバ(resolv.conf)はサンドボックス内に
+配置する必要があります。CA証明書は `ca_bundle_path` にMCP仮想絶対パスで指定すると、
+libcurl の `CURLOPT_CAINFO` に明示設定されます。例の `/etc/ssl/certs/ca-certificates.crt` は、
+Linuxでは `<root>/etc/ssl/certs/ca-certificates.crt`、Windowsでは
+`<root>\\etc\\ssl\\certs\\ca-certificates.crt` に配置します。設定しない場合はlibcurlの
+既定のCA探索を使用します。
+
+（設定ファイル）
+--config/-c で設定ファイルを指定できます。省略時はサーバーのルートディレクトリ直下にある
+mcp_config.json を起動時に読み込みます。ルート直下に存在しない場合は、実行ファイルと同じ
+ディレクトリの mcp_config.json を読み込みます。
+設定ファイルが存在しない場合、または項目が未指定の場合はデフォルト値を使用します。
+
+例:
+{
+  "tag_file_path": ".mcp/mcp_tags.json",
+  "max_read_file_size_bytes": 104857600,
+  "max_download_file_size_bytes": 209715200,
+  "download_timeout_seconds": 30,
+  "max_download_timeout_seconds": 300,
+  "ca_bundle_path": "/etc/ssl/certs/ca-certificates.crt",
+  "search_max_results": 100,
+  "search_max_results_limit": 1000,
+  "search_max_output_size_bytes": 1048576,
+  "tree_default_depth": 3,
+  "tree_max_depth": 32,
+  "tree_max_entries": 5000,
+  "tree_max_output_size_bytes": 131072,
+  "run_cmd_timeout_seconds": 30,
+  "max_run_cmd_timeout_seconds": 300,
+  "max_run_cmd_output_size_bytes": 1048576
+}
+
+max_read_file_size_bytes:
+read_file と edit_file がメモリへ読み込める1ファイルの最大サイズ（バイト）。
+正の整数を指定します。デフォルトは 104857600 バイト（100 MiB）です。
+設定ファイル自体は最大1 MiBです。不正な設定値は警告され、デフォルト値が使用されます。
+
+ca_bundle_path:
+`download_file` のTLS検証に使うCA証明書バンドルを、`/` から始まるMCP仮想絶対パスで
+指定します。相対パス、`..`、Windowsドライブパス、UNCパスは使用できません。指定した
+ファイルが存在しない、通常ファイルでない、または読み取れない場合、`download_file` は
+設定した仮想パスを含むエラーを返します。
+
+run_cmd:
+`command` を Windows では `cmd.exe`、Linux では `/bin/sh` で実行します。`path` は
+MCP仮想パスで指定する作業ディレクトリで、既定は `/` です。コマンド本文では作業対象を
+相対パスで指定するとOS間で扱いやすくなります。標準入力は無効で、標準出力と標準エラーは
+発生順を保つため結合します。終了コードが0以外でも通常応答として `exit_code`、`output`、
+`timed_out`、`truncated` を返します。Windowsでは非表示の専用コンソールを作成し、実行前に
+コードページ65001を選択するため、`cmd.exe`およびコンソールコードページに従うプログラムの
+出力はUTF-8になります。パイプ出力時にWindows OEMコードページを使うプログラムについては、
+サーバーがそのコードページからUTF-8へ変換し、元のコードページを `source_encoding`
+（例: `windows-932`）で返します。NULやテキストに通常現れない制御文字を含む出力は
+バイナリとみなし、Base64で返します。
+`run_cmd_timeout_seconds` は既定タイムアウト、`max_run_cmd_timeout_seconds` は呼び出し側が
+指定できる上限、`max_run_cmd_output_size_bytes` は保持する結合出力の上限です。タイムアウト時は
+子プロセス群を停止し、`exit_code: 124` と `timed_out: true` を返します。Linuxでは
+サンドボックスルート内に `/bin/sh` と、そのコマンドが必要とする実行環境が必要です。
+
+read_file の文字エンコーディング:
+テキストは UTF-8 のみをサポートします。UTF-8 として不正な内容、およびバイナリファイルは
+Base64 エンコードして返します。文字エンコーディングを指定するパラメータはありません。
+
+stat_file:
+`path` で指定した通常ファイルの `size_bytes`、UTC の `modified_at`（ISO 8601）、
+`is_text` を返します。UTF-8 テキストには `line_count` も返すので、`read_file` の
+行範囲を指定する前に確認できます。空ファイルは0行、最終改行だけでは行を増やしません。
+CRLFもLFと同じ1つの改行として数えます。通常ファイルには `status: "ok"` と
+`exists: true` も返します。存在しないパスは `status: "not_found"`、`exists: false`、
+`message: "No such file"`、権限がないパスは `status: "permission_denied"`、
+`message: "Permission denied"` を通常のツール応答として返します。権限エラーでは
+存在の有無を断定しません。ディレクトリや不正なパスには従来どおり使用できません。
+
+tag_file_path:
+タグデータベースファイルのMCPルート相対パスです。既定値は `mcp_tags.json` です。
+絶対パス、空のパス、`.` または `..` を含むパスは指定できません。親ディレクトリは事前に作成してください。
+
+download_file:
+max_download_file_size_bytes は保存できる最大サイズ（デフォルト200 MiB）、
+download_timeout_seconds は既定タイムアウト（30秒）、max_download_timeout_seconds は
+リクエストで指定可能なタイムアウトの上限（300秒）です。
+
+search_files:
+search_max_results は既定の最大マッチ数（100）、search_max_results_limit はリクエストで
+指定可能な上限（1000）、search_max_output_size_bytes は応答テキストの最大サイズ
+（1 MiB、最低1024バイト）です。
+名前が `.` で始まるディレクトリ（例: `.history`）は既定で再帰検索から除外します。
+必要な場合は `include_hidden_directories: true` を指定します。隠しファイル自体と、
+`path` に明示した隠しディレクトリは既定でも検索できます。
+
+get_directory_tree:
+tree_default_depth は既定深度（3）、tree_max_depth は指定可能な最大深度（32）、
+tree_max_entries は最大エントリ数（5000）、tree_max_output_size_bytes はツリー構築時の
+概算応答サイズ上限（128 KiB、最低1024バイト）です。
+名前が `.` で始まるディレクトリは既定で表示・再帰しません。
+必要な場合は `include_hidden_directories: true` を指定します。隠しファイル自体と、
+`path` に明示した隠しディレクトリは既定でも表示・参照できます。
+
+
+（FAQs）
+Q.起動時にpermission deniedになる
+
+Ubuntu 24.04 LTS 以降、セキュリティ強化（カーネル脆弱性対策）のために、一般ユーザーが
+非特権ユーザー名前空間（CLONE_NEWUSER）を作成すること自体を AppArmor がデフォルトで
+ブロックするので、unshare()を一般ユーザー使用するために以下の設定が必要
+
+一時的な設定変更
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+設定ファイル書き込み
+echo "kernel.apparmor_restrict_unprivileged_userns=0" | sudo tee -a /etc/sysctl.conf

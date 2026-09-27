@@ -1,0 +1,18 @@
+{
+  "tag_file_path": ".mcp/mcp_tags.json",
+  "max_read_file_size_bytes": 104857600,
+  "max_download_file_size_bytes": 209715200,
+  "download_timeout_seconds": 30,
+  "max_download_timeout_seconds": 300,
+  "ca_bundle_path": "/etc/ssl/certs/ca-certificates.crt",
+  "search_max_results": 100,
+  "search_max_results_limit": 1000,
+  "search_max_output_size_bytes": 1048576,
+  "tree_default_depth": 3,
+  "tree_max_depth": 32,
+  "tree_max_entries": 5000,
+  "tree_max_output_size_bytes": 131072,
+  "run_cmd_timeout_seconds": 30,
+  "max_run_cmd_timeout_seconds": 300,
+  "max_run_cmd_output_size_bytes": 1048576
+}
