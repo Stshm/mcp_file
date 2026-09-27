@@ -57,7 +57,29 @@ UCRT64:
 
     make -f Makefile.windows
 
-Windows版はx64、Windows 10以降が対象です。mcpsv_file.exeとMinGWの依存DLLはローカルディスクに配置してください。UNCパスとネットワークドライブはsandbox rootとして使えません。
+Windows版はx64、Windows 10以降が対象です。mcpsv_file.exeと以下のMinGW依存DLLをローカルディスクに配置し、DLLは実行ファイルと同じフォルダーに置いてください。
+
+    libbrotlicommon.dll
+    libbrotlidec.dll
+    libcrypto-3-x64.dll
+    libcurl-4.dll
+    libiconv-2.dll
+    libidn2-0.dll
+    libintl-8.dll
+    libjson-c-5.dll
+    libnghttp2-14.dll
+    libnghttp3-9.dll
+    libngtcp2-16.dll
+    libngtcp2_crypto_ossl-0.dll
+    libpsl-5.dll
+    libssh2-1.dll
+    libssl-3-x64.dll
+    libunistring-5.dll
+    libwinpthread-1.dll
+    libzstd.dll
+    zlib1.dll
+
+UNCパスとネットワークドライブはsandbox rootとして使えません。
 
 ## 起動
 

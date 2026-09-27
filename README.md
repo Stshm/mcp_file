@@ -57,7 +57,29 @@ Then build:
 
     make -f Makefile.windows
 
-The Windows target is x64 and requires Windows 10 or later. Keep mcpsv_file.exe and its MinGW DLL dependencies on a local disk. UNC paths and mapped network drives are not supported as the sandbox root.
+The Windows target is x64 and requires Windows 10 or later. Keep mcpsv_file.exe and its MinGW DLL dependencies on a local disk. Place these DLLs beside the executable:
+
+    libbrotlicommon.dll
+    libbrotlidec.dll
+    libcrypto-3-x64.dll
+    libcurl-4.dll
+    libiconv-2.dll
+    libidn2-0.dll
+    libintl-8.dll
+    libjson-c-5.dll
+    libnghttp2-14.dll
+    libnghttp3-9.dll
+    libngtcp2-16.dll
+    libngtcp2_crypto_ossl-0.dll
+    libpsl-5.dll
+    libssh2-1.dll
+    libssl-3-x64.dll
+    libunistring-5.dll
+    libwinpthread-1.dll
+    libzstd.dll
+    zlib1.dll
+
+UNC paths and mapped network drives are not supported as the sandbox root.
 
 ## Run
 
