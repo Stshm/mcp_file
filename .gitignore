@@ -14,3 +14,7 @@
 # Local settings and editing history
 /mcp_config.json
 /.history/
+
+# Internal review and prompt files
+/CODE_REVIEW.md
+/recommended_system_prompt_qwen_localfile.md
