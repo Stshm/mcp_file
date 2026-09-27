@@ -55,7 +55,7 @@ $(TEST_TARGET): $(UNITY_SRC) $(TEST_OBJS) $(TEST_LIB_OBJS) mcp-core
 	$(CC) $(CFLAGS) $(UNITY_INC) -o $@ $(UNITY_SRC) $(TEST_OBJS) $(TEST_LIB_OBJS) $(MCP_CORE_LIB) $(LDLIBS)
 
 $(TEST_DIR)/%.o: $(TEST_DIR)/%.c mcp_common.h
-$(CC) $(CFLAGS) $(UNITY_INC) -I./ -c $< -o $@
+	$(CC) $(CFLAGS) $(UNITY_INC) -I./ -c $< -o $@
 
 # Generate test runner automatically (optional, using Ruby script from Unity)
 # ruby $(UNITY_DIR)/auto/generate_test_runner.rb src/mcp_utils.h tests/test_mcp_utils.c tests/test_mcp_utilsRunner.c
