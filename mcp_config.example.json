@@ -5,6 +5,7 @@
   "download_timeout_seconds": 30,
   "max_download_timeout_seconds": 300,
   "ca_bundle_path": "/etc/ssl/certs/ca-certificates.crt",
+  "search_timeout_seconds": 25,
   "search_max_results": 100,
   "search_max_results_limit": 1000,
   "search_max_output_size_bytes": 1048576,

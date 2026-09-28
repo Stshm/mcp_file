@@ -18,6 +18,7 @@ uint64_t g_max_read_file_size = DEFAULT_MAX_READ_FILE_SIZE;
 uint64_t g_max_download_file_size = DEFAULT_MAX_DOWNLOAD_FILE_SIZE;
 int g_download_timeout_seconds = DEFAULT_DOWNLOAD_TIMEOUT_SECONDS;
 int g_max_download_timeout_seconds = DEFAULT_MAX_DOWNLOAD_TIMEOUT_SECONDS;
+int g_search_timeout_seconds = DEFAULT_SEARCH_TIMEOUT_SECONDS;
 int g_search_max_results = DEFAULT_SEARCH_MAX_RESULTS;
 int g_search_max_results_limit = DEFAULT_SEARCH_MAX_RESULTS_LIMIT;
 size_t g_search_max_output_size = DEFAULT_SEARCH_MAX_OUTPUT_SIZE;

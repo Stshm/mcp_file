@@ -1,5 +1,24 @@
 #include "mcp_common.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+static double search_now(void) {
+#ifdef _WIN32
+    return (double)GetTickCount64() / 1000.0;
+#else
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (double)now.tv_sec + (double)now.tv_nsec / 1000000000.0;
+#endif
+}
+
+static int search_expired(double deadline, int *timed_out) {
+    if (search_now() >= deadline) *timed_out = 1;
+    return *timed_out;
+}
+
 #define SEARCH_TRUNCATION_MARKER "\n[Output truncated by configured limit]\n"
 
 /* Appends only complete records and reserves space for a truncation marker. */
@@ -35,13 +54,16 @@ McpEntryType classify_search_entry(const char *path) {
 // search_files: ファイル名・内容検索（grep相当）の再帰ヘルパー関数
 static void search_files_recursive(char *dir_path, char *result_text, size_t *text_len, int *match_count, 
                                    int *truncated, const char *pattern, int case_sensitive, int recursive,
-                                   int include_hidden_directories, int max_results, size_t output_capacity) {
+                                   int include_hidden_directories, int max_results, size_t output_capacity,
+                                   int depth, double deadline, int *timed_out) {
+    if (search_expired(deadline, timed_out)) return;
     DIR *dir = opendir(dir_path);
     if (!dir) return;
     
     struct dirent *entry;
     
-    while ((entry = readdir(dir)) != NULL) {
+    while (!*truncated && *match_count < max_results &&
+           !search_expired(deadline, timed_out) && (entry = readdir(dir)) != NULL) {
         // "." と ".." はスキップ
         if (*truncated || strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
             continue;
@@ -58,17 +80,17 @@ static void search_files_recursive(char *dir_path, char *result_text, size_t *te
 
         // ディレクトリの場合
         if (entry_type == MCP_ENTRY_DIRECTORY) {
-            if (recursive && *match_count < max_results) {
+            if (recursive && depth > 0 && *match_count < max_results) {
                 search_files_recursive(full_path, result_text, text_len, match_count, truncated,
                                       pattern, case_sensitive, recursive, include_hidden_directories,
-                                      max_results, output_capacity);
+                                      max_results, output_capacity, depth - 1, deadline, timed_out);
             }
         } else if (entry_type == MCP_ENTRY_REGULAR) {
             FILE *fp = fopen(full_path, "r");
             if (fp) {
                 char line[1024];
                 int line_num = 0;
-                while (fgets(line, sizeof(line), fp)) {
+                while (!search_expired(deadline, timed_out) && fgets(line, sizeof(line), fp)) {
                     // max_results に達したらループを抜ける
                     if (*truncated || *match_count >= max_results) {
                         break;
@@ -121,6 +143,7 @@ static void search_files_recursive(char *dir_path, char *result_text, size_t *te
 
 // search_files: ファイル名・内容検索（grep相当）
 json_object* handle_search_files(json_object *params, json_object *id) {
+    double deadline = search_now() + g_search_timeout_seconds;
     const char *pattern = json_object_get_string(json_object_object_get(params, "pattern"));
     const char *path = json_object_get_string(json_object_object_get(params, "path"));
     
@@ -138,6 +161,20 @@ json_object* handle_search_files(json_object *params, json_object *id) {
     json_object *recursive_obj = json_object_object_get(params, "recursive");
     int recursive = (!recursive_obj || json_object_get_boolean(recursive_obj)) ? 1 : 0;  // デフォルト: true
     
+    json_object *depth_obj = json_object_object_get(params, "depth");
+    int depth = DEFAULT_TREE_DEPTH;
+    if (depth_obj) {
+        if (!json_object_is_type(depth_obj, json_type_int) ||
+            json_object_get_int64(depth_obj) < 0 ||
+            json_object_get_int64(depth_obj) > g_tree_max_depth) {
+            send_json_rpc_error(id, -32602, "depth must be an integer between 0 and the configured tree_max_depth");
+            return NULL;
+        }
+        depth = json_object_get_int(depth_obj);
+    }
+    if (depth > g_tree_max_depth) depth = g_tree_max_depth;
+    if (!recursive) depth = 0;
+
     json_object *case_sensitive_obj = json_object_object_get(params, "case_sensitive");
     int case_sensitive = (!case_sensitive_obj || json_object_get_boolean(case_sensitive_obj)) ? 1 : 0;  // デフォルト: true
 
@@ -176,11 +213,13 @@ json_object* handle_search_files(json_object *params, json_object *id) {
     size_t text_len = 0;
     int match_count = 0;
     int truncated = 0;
+    int timed_out = 0;
     
     // 再帰ヘルパー関数を呼び出し
     search_files_recursive(resolved_path, result_text, &text_len, &match_count, &truncated,
                           pattern, case_sensitive, recursive, include_hidden_directories,
-                          max_results, g_search_max_output_size);
+                          max_results, g_search_max_output_size, depth, deadline, &timed_out);
+    search_expired(deadline, &timed_out);
     
     // 結果をMCP準拠のオブジェクトにラップ
     json_object *result = json_object_new_object();
@@ -193,6 +232,24 @@ json_object* handle_search_files(json_object *params, json_object *id) {
     json_object_array_add(content_array, text_content);
     json_object_object_add(result, "content", content_array);
     
+    int limited = timed_out || truncated || match_count >= max_results;
+    json_object *metadata = json_object_new_object();
+    json_object_object_add(metadata, "status", json_object_new_string(limited ? "limit_exceeded" : "complete"));
+    json_object_object_add(metadata, "complete", json_object_new_boolean(!limited));
+    json_object_object_add(metadata, "depth", json_object_new_int(depth));
+    json_object_object_add(metadata, "timeout_seconds", json_object_new_int(g_search_timeout_seconds));
+    if (limited) {
+        json_object_object_add(metadata, "reason", json_object_new_string(
+            timed_out ? "timeout" : truncated ? "output_limit" : "max_results"));
+        json_object_object_add(metadata, "message", json_object_new_string(
+            "Search stopped; results are incomplete. Narrow the search directory or reduce depth and retry."));
+    }
+    json_object *summary = json_object_new_object();
+    json_object_object_add(summary, "type", json_object_new_string("text"));
+    json_object_object_add(summary, "text", json_object_new_string(json_object_to_json_string_ext(metadata, JSON_C_TO_STRING_PLAIN)));
+    json_object_array_add(content_array, summary);
+    json_object_object_add(result, "structuredContent", metadata);
+
     free(result_text);
     
     return result;

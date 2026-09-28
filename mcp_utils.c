@@ -311,6 +311,7 @@ int load_server_config(const char *config_path) {
     g_max_download_file_size = DEFAULT_MAX_DOWNLOAD_FILE_SIZE;
     g_download_timeout_seconds = DEFAULT_DOWNLOAD_TIMEOUT_SECONDS;
     g_max_download_timeout_seconds = DEFAULT_MAX_DOWNLOAD_TIMEOUT_SECONDS;
+    g_search_timeout_seconds = DEFAULT_SEARCH_TIMEOUT_SECONDS;
     g_search_max_results = DEFAULT_SEARCH_MAX_RESULTS;
     g_search_max_results_limit = DEFAULT_SEARCH_MAX_RESULTS_LIMIT;
     g_search_max_output_size = DEFAULT_SEARCH_MAX_OUTPUT_SIZE;
@@ -383,6 +384,7 @@ int load_server_config(const char *config_path) {
     } int_settings[] = {
         {"download_timeout_seconds", &g_download_timeout_seconds},
         {"max_download_timeout_seconds", &g_max_download_timeout_seconds},
+        {"search_timeout_seconds", &g_search_timeout_seconds},
         {"search_max_results", &g_search_max_results},
         {"search_max_results_limit", &g_search_max_results_limit},
         {"tree_default_depth", &g_tree_default_depth},

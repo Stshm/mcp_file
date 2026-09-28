@@ -63,6 +63,7 @@
 #define DEFAULT_MAX_DOWNLOAD_FILE_SIZE (200ULL * 1024ULL * 1024ULL)
 #define DEFAULT_DOWNLOAD_TIMEOUT_SECONDS 30
 #define DEFAULT_MAX_DOWNLOAD_TIMEOUT_SECONDS 300
+#define DEFAULT_SEARCH_TIMEOUT_SECONDS 25
 #define DEFAULT_SEARCH_MAX_RESULTS 100
 #define DEFAULT_SEARCH_MAX_RESULTS_LIMIT 1000
 #define DEFAULT_SEARCH_MAX_OUTPUT_SIZE (1ULL * 1024ULL * 1024ULL)
@@ -105,6 +106,7 @@ extern uint64_t g_max_read_file_size;
 extern uint64_t g_max_download_file_size;
 extern int g_download_timeout_seconds;
 extern int g_max_download_timeout_seconds;
+extern int g_search_timeout_seconds;
 extern int g_search_max_results;
 extern int g_search_max_results_limit;
 extern size_t g_search_max_output_size;

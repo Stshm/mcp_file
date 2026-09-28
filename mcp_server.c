@@ -649,7 +649,7 @@ void handle_request(json_object *request) {
         json_object *search_file_tool = json_object_new_object();
         json_object_object_add(search_file_tool, "name", json_object_new_string("search_files"));
         json_object_object_add(search_file_tool, "title", json_object_new_string("Search files in a directory (grep equivalent)"));
-        json_object_object_add(search_file_tool, "description", json_object_new_string("Searches file names and file contents below a directory for a literal string. Put only the directory in path and the search text in pattern; this tool does not use glob syntax."));
+        json_object_object_add(search_file_tool, "description", json_object_new_string("Searches file names and file contents below a directory for a literal string. Put only the directory in path and the search text in pattern; this tool does not use glob syntax. Default depth is 3 (root is depth 0); recursive=false searches only the root. Dot-prefixed directories are excluded by default. Search stops at the configured search_timeout_seconds (default 25 seconds), returning incomplete results with retry guidance."));
 
         // inputSchema 作成
         json_object *search_file_input_schema = json_object_new_object();
@@ -676,6 +676,14 @@ void handle_request(json_object *request) {
         json_object_object_add(sf_recursive, "type", json_object_new_string("boolean"));
         json_object_object_add(sf_recursive, "description", json_object_new_string("サブディレクトリも再帰的に検索するか。デフォルト: true。"));
         json_object_object_add(search_file_props, "recursive", sf_recursive);
+
+        json_object *sf_depth = json_object_new_object();
+        json_object_object_add(sf_depth, "type", json_object_new_string("integer"));
+        json_object_object_add(sf_depth, "description", json_object_new_string("Maximum subdirectory depth, as in get_directory_tree. Default: 3 (capped by tree_max_depth). 0 searches only the selected directory. recursive=false overrides this option."));
+        json_object_object_add(sf_depth, "default", json_object_new_int(g_tree_max_depth < DEFAULT_TREE_DEPTH ? g_tree_max_depth : DEFAULT_TREE_DEPTH));
+        json_object_object_add(sf_depth, "minimum", json_object_new_int(0));
+        json_object_object_add(sf_depth, "maximum", json_object_new_int(g_tree_max_depth));
+        json_object_object_add(search_file_props, "depth", sf_depth);
 
         json_object *sf_hidden = json_object_new_object();
         json_object_object_add(sf_hidden, "type", json_object_new_string("boolean"));

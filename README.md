@@ -125,6 +125,7 @@ The second command creates the parent directory for the example tag database pat
 | download_timeout_seconds | 30 | Default download timeout. |
 | max_download_timeout_seconds | 300 | Maximum timeout accepted by download_file. |
 | ca_bundle_path | unset | Optional CA bundle path inside the root, written as an MCP absolute path. |
+| search_timeout_seconds | 25 | Search time limit in seconds; stops traversal and returns incomplete results with retry guidance. |
 | search_max_results | 100 | Default result limit for search_files. |
 | search_max_results_limit | 1000 | Maximum result limit accepted by search_files. |
 | search_max_output_size_bytes | 1048576 | Maximum search response size (1 MiB). |
@@ -146,3 +147,13 @@ For TLS downloads, ca_bundle_path must point to a certificate bundle available i
 - Windows roots must be on a local drive. Network shares and mapped network drives are unsupported.
 - download_file requires outbound Internet access. The Windows AppContainer includes the outbound Internet capability for this tool.
 - run_cmd executes shell commands inside the sandbox with a timeout and output limit. Only use this server with MCP clients and users you trust.
+
+## Search limits and results
+
+`search_files` accepts `depth` (default 3, root depth 0, capped by `tree_max_depth`). `recursive: false` overrides depth and searches only the selected directory. Dot-prefixed directories remain excluded by default. Response metadata reports effective depth and completion status.
+
+The deadline is checked between directory entries and file-read chunks. Traversal closes its files and directories before returning; no background search remains. A blocking OS filesystem call can delay the deadline check.
+
+Search metadata is returned in `structuredContent` and as JSON text in the second `content` item; the first item contains matching lines. `status` is `complete` or `limit_exceeded`, with `complete`, `depth`, and `timeout_seconds`. Limited results include `reason` (`timeout`, `output_limit`, or `max_results`) and retry guidance. Completion is relative to the selected search depth. Clients that display only matching text or shorten tool history may hide this metadata; inspect the full tool response when diagnosing limits.
+
+Set `search_timeout_seconds` below the client tool timeout, allowing time for response delivery. The default remains 25 seconds; clients with shorter limits may need a value such as 10 seconds.

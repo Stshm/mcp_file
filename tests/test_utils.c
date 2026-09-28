@@ -9,6 +9,7 @@ uint64_t g_max_read_file_size;
 uint64_t g_max_download_file_size;
 int g_download_timeout_seconds;
 int g_max_download_timeout_seconds;
+int g_search_timeout_seconds;
 int g_search_max_results;
 int g_search_max_results_limit;
 size_t g_search_max_output_size;
@@ -36,6 +37,7 @@ void setUp(void) {
     g_max_download_file_size = DEFAULT_MAX_DOWNLOAD_FILE_SIZE;
     g_download_timeout_seconds = DEFAULT_DOWNLOAD_TIMEOUT_SECONDS;
     g_max_download_timeout_seconds = DEFAULT_MAX_DOWNLOAD_TIMEOUT_SECONDS;
+    g_search_timeout_seconds = DEFAULT_SEARCH_TIMEOUT_SECONDS;
     g_search_max_results = DEFAULT_SEARCH_MAX_RESULTS;
     g_search_max_results_limit = DEFAULT_SEARCH_MAX_RESULTS_LIMIT;
     g_search_max_output_size = DEFAULT_SEARCH_MAX_OUTPUT_SIZE;
@@ -484,6 +486,75 @@ void test_hidden_directories_are_opt_in_for_tree_and_search(void) {
     TEST_ASSERT_EQUAL_INT(0, unlink(path));
     TEST_ASSERT_EQUAL_INT(0, rmdir(root));
     snprintf(g_root_dir, sizeof(g_root_dir), "%s", previous_root);
+}
+
+void test_search_depth_and_timeout(void) {
+    char root[] = "/tmp/mcp-search-limits-XXXXXX";
+    TEST_ASSERT_NOT_NULL(mkdtemp(root));
+    char previous_root[MAX_PATH_LENGTH];
+    snprintf(previous_root, sizeof(previous_root), "%s", g_root_dir);
+    snprintf(g_root_dir, sizeof(g_root_dir), "%s", root);
+    const char *dirs[] = {"a", "a/b", "a/b/c", "a/b/c/d"};
+    char path[MAX_PATH_LENGTH];
+    for (int i = 0; i < 4; i++) {
+        snprintf(path, sizeof(path), "%s/%s", root, dirs[i]);
+        TEST_ASSERT_EQUAL_INT(0, mkdir(path, 0700));
+    }
+    write_stat_fixture(root, "root.txt", "needle\n", 7);
+    write_stat_fixture(root, "a/b/c/three.txt", "needle\n", 7);
+    write_stat_fixture(root, "a/b/c/d/four.txt", "needle\n", 7);
+    json_object *params = json_object_new_object();
+    json_object *id = json_object_new_int(92);
+    json_object_object_add(params, "path", json_object_new_string("/"));
+    json_object_object_add(params, "pattern", json_object_new_string("needle"));
+    json_object *result = handle_search_files(params, id);
+    TEST_ASSERT_NOT_NULL(strstr(first_tool_text(result), "three.txt"));
+    TEST_ASSERT_NULL(strstr(first_tool_text(result), "four.txt"));
+    json_object_put(result);
+    json_object_object_add(params, "depth", json_object_new_int(4));
+    result = handle_search_files(params, id);
+    TEST_ASSERT_NOT_NULL(strstr(first_tool_text(result), "four.txt"));
+    json_object_put(result);
+    json_object_object_add(params, "recursive", json_object_new_boolean(false));
+    result = handle_search_files(params, id);
+    TEST_ASSERT_NOT_NULL(strstr(first_tool_text(result), "root.txt"));
+    TEST_ASSERT_NULL(strstr(first_tool_text(result), "three.txt"));
+    json_object *metadata = json_object_object_get(result, "structuredContent");
+    TEST_ASSERT_EQUAL_INT(0, json_object_get_int(json_object_object_get(metadata, "depth")));
+    TEST_ASSERT_TRUE(json_object_get_boolean(json_object_object_get(metadata, "complete")));
+    json_object_put(result);
+
+    /* Sparse regular file: exercise the read-loop deadline without allocating gigabytes. */
+    snprintf(path, sizeof(path), "%s/large.txt", root);
+    FILE *fp = fopen(path, "wb");
+    TEST_ASSERT_NOT_NULL(fp);
+    TEST_ASSERT_EQUAL_INT(0, ftruncate(fileno(fp), (off_t)16 * 1024 * 1024 * 1024));
+    fclose(fp);
+    g_search_timeout_seconds = 1;
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    result = handle_search_files(params, id);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    metadata = json_object_object_get(result, "structuredContent");
+    TEST_ASSERT_FALSE(json_object_get_boolean(json_object_object_get(metadata, "complete")));
+    TEST_ASSERT_EQUAL_STRING("timeout", json_object_get_string(json_object_object_get(metadata, "reason")));
+    TEST_ASSERT_TRUE(end.tv_sec - start.tv_sec < 4);
+    json_object_put(result);
+    g_search_timeout_seconds = DEFAULT_SEARCH_TIMEOUT_SECONDS;
+    TEST_ASSERT_EQUAL_INT(0, unlink(path));
+    const char *files[] = {"root.txt", "a/b/c/three.txt", "a/b/c/d/four.txt"};
+    for (int i = 0; i < 3; i++) {
+        snprintf(path, sizeof(path), "%s/%s", root, files[i]);
+        TEST_ASSERT_EQUAL_INT(0, unlink(path));
+    }
+    for (int i = 3; i >= 0; i--) {
+        snprintf(path, sizeof(path), "%s/%s", root, dirs[i]);
+        TEST_ASSERT_EQUAL_INT(0, rmdir(path));
+    }
+    TEST_ASSERT_EQUAL_INT(0, rmdir(root));
+    snprintf(g_root_dir, sizeof(g_root_dir), "%s", previous_root);
+    json_object_put(params);
+    json_object_put(id);
 }
 
 static json_object *stat_fixture(const char *virtual_path) {
@@ -961,6 +1032,7 @@ int main(void) {
     RUN_TEST(test_run_cmd_reports_output_exit_path_timeout_and_truncation);
     RUN_TEST(test_edit_file_accepts_equivalent_line_endings_and_preserves_crlf);
     RUN_TEST(test_hidden_directories_are_opt_in_for_tree_and_search);
+    RUN_TEST(test_search_depth_and_timeout);
     RUN_TEST(test_sha256_empty);
     RUN_TEST(test_sha256_hello);
     RUN_TEST(test_config_tag_file_path);

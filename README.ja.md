@@ -125,6 +125,7 @@ root_dirを省略するとMCP_ROOT_DIR環境変数を使い、環境変数もな
 | download_timeout_seconds | 30 | ダウンロードの既定タイムアウト。 |
 | max_download_timeout_seconds | 300 | download_fileに指定できるタイムアウト上限。 |
 | ca_bundle_path | 未設定 | ルート内にあるCA証明書バンドル。MCP絶対パスで指定します。 |
+| search_timeout_seconds | 25 | 検索の制限時間（秒）。時間切れで探索を停止し、未完了の結果と再検索の案内を返す。 |
 | search_max_results | 100 | search_filesの既定結果数。 |
 | search_max_results_limit | 1000 | search_filesに指定できる結果数の上限。 |
 | search_max_output_size_bytes | 1048576 | 検索応答の最大サイズ（1 MiB）。 |
@@ -146,3 +147,13 @@ TLSダウンロードでca_bundle_pathを指定する場合、証明書バンド
 - Windowsのrootはローカルドライブ上に置いてください。ネットワーク共有とネットワークドライブは非対応です。
 - download_fileには外部へのインターネット接続が必要です。Windows AppContainerにはこのツール用のoutbound Internet capabilityを付与します。
 - run_cmdはsandbox内でコマンドを実行し、タイムアウトと出力上限を適用します。信頼できるMCPクライアントと利用者に対してのみ使用してください。
+
+## 検索の制限と返却結果
+
+`search_files` の `depth` は既定3、起点が0（直下のみ）です。上限は `tree_max_depth`。`recursive: false` は深さ指定より優先します。ドットで始まるディレクトリの既定除外は維持されます。結果のメタデータに適用深さと完了状態を返します。
+
+期限はディレクトリエントリー間とファイル読み取りチャンク間で確認します。終了時にファイルとディレクトリを閉じ、バックグラウンドに探索を残しません。ただし、OSのファイルシステム呼び出し自体がブロックした場合、期限の確認はその呼び出しが戻るまで遅れます。
+
+完了情報は `structuredContent` と、2番目の `content` 要素のJSONテキストに返します。最初の要素はマッチ行です。`status`（`complete` / `limit_exceeded`）、`complete`、`depth`、`timeout_seconds` を含み、打ち切り時は `reason`（`timeout` / `output_limit` / `max_results`）と再試行の案内を追加します。完了は指定した探索深さの範囲内での完了を意味します。結果テキストだけを表示するクライアントや履歴の短縮表示では情報が見えない場合があるため、制限の調査時はツール応答全体を確認してください。
+
+`search_timeout_seconds` はクライアント側のツールタイムアウトより短くし、応答の返却時間にも余裕を持たせてください。既定値は25秒ですが、クライアントの制限によっては10秒などに調整してください。
