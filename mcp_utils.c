@@ -540,7 +540,13 @@ int atomic_copy_file(const char *source, const char *destination) {
     written = snprintf(temp, sizeof(temp), "%s/.mcp-copy-XXXXXX", dir);
     if (written < 0 || (size_t)written >= sizeof(temp)) { errno = ENAMETOOLONG; return -1; }
 
-    int in_fd = open(source, O_RDONLY);
+    int input_flags = O_RDONLY;
+#ifdef _WIN32
+    /* _open defaults to text mode: CRLF translation and Ctrl-Z EOF would
+       corrupt executable files and other binary payloads during copying. */
+    input_flags |= _O_BINARY;
+#endif
+    int in_fd = open(source, input_flags);
     if (in_fd < 0) return -1;
     int out_fd = mkstemp(temp);
     if (out_fd < 0) { close(in_fd); return -1; }

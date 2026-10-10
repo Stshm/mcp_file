@@ -31,7 +31,16 @@ $(TARGET): $(OBJS)
 mcpsv_file.res.o: mcpsv_file.rc mcpsv_file.exe.manifest
 	windres -i $< -o $@
 
+test_atomic_copy.exe: tests/windows/test_atomic_copy.c mcp_utils.c mcp_common.h mcp_lib/mcp_fs.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -I. -ffunction-sections -fdata-sections \
+		-o $@ tests/windows/test_atomic_copy.c mcp_utils.c mcp_lib/mcp_fs.c \
+		-Wl,--gc-sections $(LDLIBS)
+
+test-copy: test_atomic_copy.exe
+	./test_atomic_copy.exe
+
 clean:
 	rm -f $(OBJS) $(TARGET)
+	rm -f test_atomic_copy.exe
 
-.PHONY: all clean
+.PHONY: all clean test-copy
