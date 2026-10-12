@@ -488,6 +488,55 @@ void test_hidden_directories_are_opt_in_for_tree_and_search(void) {
     snprintf(g_root_dir, sizeof(g_root_dir), "%s", previous_root);
 }
 
+void test_search_preserves_utf8_at_chunk_boundary(void) {
+    char root[] = "/tmp/mcp-search-utf8-XXXXXX";
+    TEST_ASSERT_NOT_NULL(mkdtemp(root));
+    char previous_root[MAX_PATH_LENGTH];
+    snprintf(previous_root, sizeof(previous_root), "%s", g_root_dir);
+    snprintf(g_root_dir, sizeof(g_root_dir), "%s", root);
+    char bytes[1040];
+    memset(bytes, 'x', 1022);
+    memcpy(bytes, "chat/completions", 16);
+    memcpy(bytes + 1022, "\xe3\x81\x82\r\n", 5);
+    write_stat_fixture(root, "boundary.txt", bytes, 1027);
+    json_object *params = json_object_new_object();
+    json_object *id = json_object_new_int(93);
+    json_object_object_add(params, "path", json_object_new_string("/"));
+    json_object_object_add(params, "pattern", json_object_new_string("CHAT/COMPLETIONS"));
+    json_object_object_add(params, "case_sensitive", json_object_new_boolean(false));
+    json_object *result = handle_search_files(params, id);
+    const char *text = first_tool_text(result);
+    TEST_ASSERT_TRUE(is_valid_utf8((const unsigned char *)text, strlen(text)));
+    TEST_ASSERT_NOT_NULL(strstr(text, "\xe3\x81\x82"));
+    TEST_ASSERT_EQUAL_STRING("utf-8", json_object_get_string(json_object_object_get(
+        json_object_object_get(result, "structuredContent"), "encoding")));
+    const char *serialized = json_object_to_json_string_ext(result, JSON_C_TO_STRING_PLAIN);
+    TEST_ASSERT_TRUE(is_valid_utf8((const unsigned char *)serialized, strlen(serialized)));
+    json_object_put(result);
+
+    /* Actual legacy bytes must never leak into JSON strings. */
+    write_stat_fixture(root, "boundary.txt", "chat/completions \x82\xa0\n", 20);
+    result = handle_search_files(params, id);
+    TEST_ASSERT_EQUAL_STRING("base64", json_object_get_string(json_object_object_get(
+        json_object_object_get(result, "structuredContent"), "encoding")));
+    serialized = json_object_to_json_string_ext(result, JSON_C_TO_STRING_PLAIN);
+    TEST_ASSERT_TRUE(is_valid_utf8((const unsigned char *)serialized, strlen(serialized)));
+    size_t decoded_len;
+    unsigned char *decoded = base64_decode(first_tool_text(result), &decoded_len);
+    TEST_ASSERT_NOT_NULL(decoded);
+    TEST_ASSERT_TRUE(decoded_len >= 20);
+    TEST_ASSERT_EQUAL_MEMORY("chat/completions \x82\xa0\n", decoded + decoded_len - 20, 20);
+    free(decoded);
+    json_object_put(result);
+    char path[MAX_PATH_LENGTH];
+    snprintf(path, sizeof(path), "%s/boundary.txt", root);
+    TEST_ASSERT_EQUAL_INT(0, unlink(path));
+    TEST_ASSERT_EQUAL_INT(0, rmdir(root));
+    snprintf(g_root_dir, sizeof(g_root_dir), "%s", previous_root);
+    json_object_put(params);
+    json_object_put(id);
+}
+
 void test_search_depth_and_timeout(void) {
     char root[] = "/tmp/mcp-search-limits-XXXXXX";
     TEST_ASSERT_NOT_NULL(mkdtemp(root));
@@ -1033,6 +1082,7 @@ int main(void) {
     RUN_TEST(test_edit_file_accepts_equivalent_line_endings_and_preserves_crlf);
     RUN_TEST(test_hidden_directories_are_opt_in_for_tree_and_search);
     RUN_TEST(test_search_depth_and_timeout);
+    RUN_TEST(test_search_preserves_utf8_at_chunk_boundary);
     RUN_TEST(test_sha256_empty);
     RUN_TEST(test_sha256_hello);
     RUN_TEST(test_config_tag_file_path);

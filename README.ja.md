@@ -157,3 +157,5 @@ TLSダウンロードでca_bundle_pathを指定する場合、証明書バンド
 完了情報は `structuredContent` と、2番目の `content` 要素のJSONテキストに返します。最初の要素はマッチ行です。`status`（`complete` / `limit_exceeded`）、`complete`、`depth`、`timeout_seconds` を含み、打ち切り時は `reason`（`timeout` / `output_limit` / `max_results`）と再試行の案内を追加します。完了は指定した探索深さの範囲内での完了を意味します。結果テキストだけを表示するクライアントや履歴の短縮表示では情報が見えない場合があるため、制限の調査時はツール応答全体を確認してください。
 
 `search_timeout_seconds` はクライアント側のツールタイムアウトより短くし、応答の返却時間にも余裕を持たせてください。既定値は25秒ですが、クライアントの制限によっては10秒などに調整してください。
+
+検索の読み取りチャンクはUTF-8文字の途中で分断しません。結果のバイト列がUTF-8として不正な場合、最初のテキスト要素をBase64で返し、その要素の `encoding` と `structuredContent.encoding` を `base64` にします。復号してから内容を確認してください。正常なUTF-8の結果は `encoding: "utf-8"` です。元の文字コードは推測しません。

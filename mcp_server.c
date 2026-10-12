@@ -649,7 +649,7 @@ void handle_request(json_object *request) {
         json_object *search_file_tool = json_object_new_object();
         json_object_object_add(search_file_tool, "name", json_object_new_string("search_files"));
         json_object_object_add(search_file_tool, "title", json_object_new_string("Search files in a directory (grep equivalent)"));
-        json_object_object_add(search_file_tool, "description", json_object_new_string("Searches file names and file contents below a directory for a literal string. Put only the directory in path and the search text in pattern; this tool does not use glob syntax. Default depth is 3 (root is depth 0); recursive=false searches only the root. Dot-prefixed directories are excluded by default. Search stops at the configured search_timeout_seconds (default 25 seconds), returning incomplete results with retry guidance."));
+        json_object_object_add(search_file_tool, "description", json_object_new_string("Searches file names and file contents below a directory for a literal string. Put only the directory in path and the search text in pattern; this tool does not use glob syntax. Default depth is 3 (root is depth 0); recursive=false searches only the root. Dot-prefixed directories are excluded by default. Search stops at the configured search_timeout_seconds (default 25 seconds), returning incomplete results with retry guidance. Results preserve UTF-8 character boundaries; non-UTF-8 result bytes are Base64-encoded with encoding=base64 in result metadata and must be decoded before reading."));
 
         // inputSchema 作成
         json_object *search_file_input_schema = json_object_new_object();

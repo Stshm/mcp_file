@@ -157,3 +157,5 @@ The deadline is checked between directory entries and file-read chunks. Traversa
 Search metadata is returned in `structuredContent` and as JSON text in the second `content` item; the first item contains matching lines. `status` is `complete` or `limit_exceeded`, with `complete`, `depth`, and `timeout_seconds`. Limited results include `reason` (`timeout`, `output_limit`, or `max_results`) and retry guidance. Completion is relative to the selected search depth. Clients that display only matching text or shorten tool history may hide this metadata; inspect the full tool response when diagnosing limits.
 
 Set `search_timeout_seconds` below the client tool timeout, allowing time for response delivery. The default remains 25 seconds; clients with shorter limits may need a value such as 10 seconds.
+
+Search read chunks preserve UTF-8 character boundaries. If result bytes are not valid UTF-8, the first text item contains Base64 instead; its `encoding` and `structuredContent.encoding` are `base64`. Decode that item before reading it. Valid UTF-8 results use `encoding: "utf-8"`; no legacy encoding is guessed.

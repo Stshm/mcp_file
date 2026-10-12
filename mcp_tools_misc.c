@@ -51,6 +51,31 @@ McpEntryType classify_search_entry(const char *path) {
     return MCP_ENTRY_UNKNOWN;
 }
 
+/* Keep the existing bounded read, but finish a UTF-8 character that straddles
+ * the fgets boundary. Three spare bytes cover the longest UTF-8 sequence. */
+static int read_search_chunk(FILE *fp, char *line) {
+    if (!fgets(line, 1024, fp)) return 0;
+    size_t len = strlen(line);
+    if (len != 1023 || line[len - 1] == '\n') return 1;
+    size_t lead = len - 1;
+    while (lead > 0 && ((unsigned char)line[lead] & 0xc0) == 0x80) lead--;
+    unsigned char c = (unsigned char)line[lead];
+    size_t width = c >= 0xc2 && c <= 0xdf ? 2 :
+                   c >= 0xe0 && c <= 0xef ? 3 :
+                   c >= 0xf0 && c <= 0xf4 ? 4 : 1;
+    while (len - lead < width) {
+        int next = fgetc(fp);
+        if (next == EOF) break;
+        if (((unsigned char)next & 0xc0) != 0x80) {
+            ungetc(next, fp);
+            break;
+        }
+        line[len++] = (char)next;
+    }
+    line[len] = '\0';
+    return 1;
+}
+
 // search_files: ファイル名・内容検索（grep相当）の再帰ヘルパー関数
 static void search_files_recursive(char *dir_path, char *result_text, size_t *text_len, int *match_count, 
                                    int *truncated, const char *pattern, int case_sensitive, int recursive,
@@ -88,15 +113,17 @@ static void search_files_recursive(char *dir_path, char *result_text, size_t *te
         } else if (entry_type == MCP_ENTRY_REGULAR) {
             FILE *fp = fopen(full_path, "r");
             if (fp) {
-                char line[1024];
+                char line[1027];
                 int line_num = 0;
-                while (!search_expired(deadline, timed_out) && fgets(line, sizeof(line), fp)) {
+                int starts_line = 1;
+                while (!search_expired(deadline, timed_out) && read_search_chunk(fp, line)) {
                     // max_results に達したらループを抜ける
                     if (*truncated || *match_count >= max_results) {
                         break;
                     }
                     
-                    line_num++;
+                    if (starts_line) line_num++;
+                    starts_line = strchr(line, '\n') != NULL;
                     int matched = 0;
                     if (case_sensitive) {
                         if (strstr(line, pattern)) {
@@ -119,12 +146,13 @@ static void search_files_recursive(char *dir_path, char *result_text, size_t *te
                     
                     if (matched) {
                         // grep風フォーマット: filename.c:line_num:matched line content
-                        char record[MAX_PATH_LENGTH + 1024 + 32];
+                        char record[MAX_PATH_LENGTH + 1027 + 32];
                         char visible_path[MAX_PATH_LENGTH];
                         const char *result_path =
                             virtualize_mcp_path(visible_path, sizeof(visible_path), full_path) == 0
                                 ? visible_path : full_path;
-                        int written = snprintf(record, sizeof(record), "%s:%d:%s", result_path, line_num, line);
+                        int written = snprintf(record, sizeof(record), "%s:%d:%s%s", result_path, line_num, line,
+                                               starts_line ? "" : "\n");
                         if (written < 0 || (size_t)written >= sizeof(record) ||
                             !append_search_result(result_text, output_capacity, text_len, record)) {
                             *truncated = 1;
@@ -227,13 +255,30 @@ json_object* handle_search_files(json_object *params, json_object *id) {
     
     json_object *text_content = json_object_new_object();
     json_object_object_add(text_content, "type", json_object_new_string("text"));
-    json_object_object_add(text_content, "text", json_object_new_string(result_text));
+    int utf8 = is_valid_utf8((const unsigned char *)result_text, text_len);
+    char *encoded = NULL;
+    if (!utf8) {
+        encoded = malloc(text_len * 4 / 3 + 4);
+        if (!encoded) {
+            json_object_put(result);
+            json_object_put(content_array);
+            json_object_put(text_content);
+            free(result_text);
+            send_json_rpc_error(id, -32603, "Memory allocation failed for search Base64 output");
+            return NULL;
+        }
+        base64_encode(result_text, text_len, encoded);
+    }
+    json_object_object_add(text_content, "text", json_object_new_string(utf8 ? result_text : encoded));
+    json_object_object_add(text_content, "encoding", json_object_new_string(utf8 ? "utf-8" : "base64"));
+    free(encoded);
     
     json_object_array_add(content_array, text_content);
     json_object_object_add(result, "content", content_array);
     
     int limited = timed_out || truncated || match_count >= max_results;
     json_object *metadata = json_object_new_object();
+    json_object_object_add(metadata, "encoding", json_object_new_string(utf8 ? "utf-8" : "base64"));
     json_object_object_add(metadata, "status", json_object_new_string(limited ? "limit_exceeded" : "complete"));
     json_object_object_add(metadata, "complete", json_object_new_boolean(!limited));
     json_object_object_add(metadata, "depth", json_object_new_int(depth));
