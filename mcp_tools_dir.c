@@ -240,7 +240,11 @@ json_object* handle_create_directory(json_object *params, json_object *id) {
             snprintf(message, sizeof(message),
                      "Cannot create directory: %s", strerror(saved_errno));
         }
-        send_json_rpc_error(id, -32603, message);
+        send_tool_error(id, -32603, message,
+                        saved_errno == EEXIST || saved_errno == EACCES ||
+                        saved_errno == EPERM || saved_errno == ENOENT ||
+                        saved_errno == ENOTDIR || saved_errno == EROFS
+                            ? TOOL_RESULT_PENDING : TOOL_RESULT_UNKNOWN);
         return NULL;
     }
 
@@ -296,7 +300,7 @@ json_object* handle_move_file(json_object *params, json_object *id) {
     if (rename(resolved_source, resolved_destination) != 0) {
         char msg[256];
         snprintf(msg, sizeof(msg), "Move failed: %s", strerror(errno));
-        send_json_rpc_error(id, -32603, msg);
+        send_tool_error(id, -32603, msg, TOOL_RESULT_UNKNOWN);
         return NULL;
     }
     

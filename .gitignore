@@ -17,4 +17,5 @@
 
 # Internal review and prompt files
 /CODE_REVIEW.md
+/ERROR_CODES.ja.md
 /recommended_system_prompt_qwen_localfile.md

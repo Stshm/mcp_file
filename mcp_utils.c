@@ -476,6 +476,12 @@ int load_server_config(const char *config_path) {
 }
 
 int atomic_write_file(const char *path, const void *data, size_t len) {
+    return atomic_write_file_result(path, data, len, NULL);
+}
+
+int atomic_write_file_result(const char *path, const void *data, size_t len,
+                             ToolResultType *result_type) {
+    if (result_type) *result_type = TOOL_RESULT_PENDING;
     if (!path || (!data && len != 0)) { errno = EINVAL; return -1; }
     char dir[MAX_PATH_LENGTH];
     int written = snprintf(dir, sizeof(dir), "%s", path);
@@ -514,7 +520,11 @@ int atomic_write_file(const char *path, const void *data, size_t len) {
     int failed = fsync(fd) != 0;
     if (close(fd) != 0) failed = 1;
     if (failed) { unlink(temp); return -1; }
+    /* Once publication is attempted, a failed OS call may leave an uncertain
+     * result (for example on a network filesystem). Never promise safe retry. */
+    if (result_type) *result_type = TOOL_RESULT_UNKNOWN;
     if (mcp_file_replace(temp, path) != 0) { unlink(temp); return -1; }
+    if (result_type) *result_type = TOOL_RESULT_COMPLETE;
 
     int dir_fd = open(dir, O_RDONLY | O_DIRECTORY);
     if (dir_fd >= 0) { (void)fsync(dir_fd); close(dir_fd); }
@@ -522,6 +532,12 @@ int atomic_write_file(const char *path, const void *data, size_t len) {
 }
 
 int atomic_copy_file(const char *source, const char *destination) {
+    return atomic_copy_file_result(source, destination, NULL);
+}
+
+int atomic_copy_file_result(const char *source, const char *destination,
+                            ToolResultType *result_type) {
+    if (result_type) *result_type = TOOL_RESULT_PENDING;
     struct stat source_stat;
     if (mcp_file_stat(source, &source_stat) != 0 || !S_ISREG(source_stat.st_mode)) {
         errno = EINVAL;
@@ -566,7 +582,15 @@ int atomic_copy_file(const char *source, const char *destination) {
     if (close(in_fd) != 0) failed = 1;
     if (!failed && fsync(out_fd) != 0) failed = 1;
     if (close(out_fd) != 0) failed = 1;
-    if (!failed && mcp_file_publish_exclusive(temp, destination) != 0) failed = 1;
+    if (!failed) {
+        if (result_type) *result_type = TOOL_RESULT_UNKNOWN;
+        if (mcp_file_publish_exclusive(temp, destination) != 0) {
+            failed = 1;
+            if (errno == EEXIST && result_type) *result_type = TOOL_RESULT_PENDING;
+        } else if (result_type) {
+            *result_type = TOOL_RESULT_COMPLETE;
+        }
+    }
     if (failed) { unlink(temp); return -1; }
     (void)unlink(temp);
     int dir_fd = open(dir, O_RDONLY | O_DIRECTORY);

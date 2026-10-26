@@ -23,6 +23,16 @@
 - タグ: tag_file、batch_tag_file、get_tags、delete_tag
 - ネットワークとコマンド: download_file、run_cmd
 
+## 実行結果とリトライ
+
+応答の `result` 直下に `resultType` を返します。
+`io.github.stshm.mcp-file/execution-outcome` 拡張を双方が宣言した場合、
+結果確定は `complete`、対象に変更が残っていないことを保証できる失敗は `pending`、
+変更の有無を保証できず再試行前の確認が必要な場合は `unknown` です。
+`isError` は別途、エラーの有無を表します。
+未対応クライアントには公式の `complete` のみを返し、追加の再試行保証は提供しません。
+能力宣言の例と判定基準は [拡張仕様](EXECUTION_OUTCOME.md) を参照してください。
+
 ## ビルド
 
 MCP共通ライブラリのソースをmcp_lib/に同梱しているため、このリポジトリ単独でビルドできます。

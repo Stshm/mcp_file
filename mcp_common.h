@@ -134,6 +134,19 @@ int normalize_new_path(char *out_abs_path, int out_len, const char *in_path);
 int resolve_mcp_path(char *out_abs_path, int out_len, const char *virtual_path);
 int virtualize_mcp_path(char *out_path, int out_len, const char *native_path);
 int load_server_config(const char *config_path);
+typedef enum {
+    TOOL_RESULT_COMPLETE,
+    TOOL_RESULT_PENDING,
+    TOOL_RESULT_UNKNOWN
+} ToolResultType;
+
+#define EXECUTION_OUTCOME_EXTENSION "io.github.stshm.mcp-file/execution-outcome"
+void set_tool_result_extension_enabled(int enabled);
+const char *tool_result_type_name(ToolResultType type);
+int atomic_write_file_result(const char *path, const void *data, size_t len,
+                             ToolResultType *result_type);
+int atomic_copy_file_result(const char *source, const char *destination,
+                            ToolResultType *result_type);
 int atomic_write_file(const char *path, const void *data, size_t len);
 int atomic_copy_file(const char *source, const char *destination);
 void add_text_first_line_fprintf(FILE *fp, const char *data, const char *add_text);
@@ -142,6 +155,11 @@ void condense_crlf2lf(char* buf, size_t len);
 
 void send_json_rpc_response(json_object *id, json_object *result);
 void send_json_rpc_error(json_object *id, int code, const char *message);
+/* Takes ownership of data, including when no response is sent. */
+void send_json_rpc_error_data(json_object *id, int code, const char *message,
+                              json_object *data);
+void send_tool_error(json_object *id, int code, const char *message,
+                     ToolResultType result_type);
 void handle_error(json_object *id, int err);
 
 int append_search_result(char *result_text, size_t capacity,

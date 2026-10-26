@@ -23,6 +23,16 @@ Available MCP tools:
 - Tags: tag_file, batch_tag_file, get_tags, delete_tag
 - Network and commands: download_file, run_cmd
 
+## Execution outcomes and retries
+
+Responses include `resultType` directly inside `result`. When both peers advertise
+`io.github.stshm.mcp-file/execution-outcome`, it distinguishes known completion
+(`complete`), an operation that has not committed and can be corrected/retried
+(`pending`), and an uncertain outcome requiring inspection before retry (`unknown`).
+`isError` independently reports errors. Clients without the extension receive only
+core `complete`, without an additional safe-retry guarantee.
+See the [extension specification](EXECUTION_OUTCOME.md) for capability examples and classification rules.
+
 ## Build
 
 The repository includes the MCP core library source under mcp_lib, so it can be built from a standalone checkout.

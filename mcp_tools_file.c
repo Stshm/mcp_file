@@ -514,9 +514,15 @@ json_object* handle_create_file(json_object *params, json_object *id) {
     // ファイル書き込み（新規作成）
     int fd = open(abs_path, O_WRONLY | O_CREAT | O_EXCL, 0666);
     if (fd < 0) {
+        int saved_errno = errno;
         char msg[MAX_PATH_LENGTH + 64];
-        snprintf(msg, sizeof(msg), "Cannot create file: %s", strerror(errno));
-        send_json_rpc_error(id, errno == EEXIST ? -32001 : -32603, msg);
+        snprintf(msg, sizeof(msg), "Cannot create file: %s", strerror(saved_errno));
+        ToolResultType result_type =
+            saved_errno == EEXIST || saved_errno == EACCES || saved_errno == EPERM ||
+            saved_errno == ENOENT || saved_errno == ENOTDIR || saved_errno == EROFS ||
+            saved_errno == EINVAL || saved_errno == ENAMETOOLONG
+                ? TOOL_RESULT_PENDING : TOOL_RESULT_UNKNOWN;
+        send_tool_error(id, saved_errno == EEXIST ? -32001 : -32603, msg, result_type);
         return NULL;
     }
     size_t remaining = strlen(content);
@@ -535,8 +541,9 @@ json_object* handle_create_file(json_object *params, json_object *id) {
     if (!failed && fsync(fd) != 0) failed = 1;
     if (close(fd) != 0) failed = 1;
     if (failed) {
-        unlink(abs_path);
-        send_json_rpc_error(id, -32603, "Failed while writing new file");
+        ToolResultType result_type = unlink(abs_path) == 0
+            ? TOOL_RESULT_PENDING : TOOL_RESULT_UNKNOWN;
+        send_tool_error(id, -32603, "Failed while writing new file", result_type);
         return NULL;
     }
     
@@ -570,8 +577,9 @@ json_object* handle_write_file(json_object *params, json_object *id) {
         send_json_rpc_error(id, -32603, "Directory does not exist or path is invalid");
         return NULL;
     }
-    if (atomic_write_file(abs_path, content, strlen(content)) != 0) {
-        send_json_rpc_error(id, -32603, "Cannot write file atomically");
+    ToolResultType result_type;
+    if (atomic_write_file_result(abs_path, content, strlen(content), &result_type) != 0) {
+        send_tool_error(id, -32603, "Cannot write file atomically", result_type);
         return NULL;
     }
     
@@ -1155,9 +1163,10 @@ json_object* handle_edit_file(json_object *params, json_object *id) {
     free(normalized_content);
     free(file_content);
 
-    if (atomic_write_file(abs_path, new_file_content, new_file_length) != 0) {
+    ToolResultType result_type;
+    if (atomic_write_file_result(abs_path, new_file_content, new_file_length, &result_type) != 0) {
         free(new_file_content);
-        send_json_rpc_error(id, -32003, "Failed to apply file patch");
+        send_tool_error(id, -32003, "Failed to apply file patch", result_type);
         return NULL;
     }
     free(new_file_content);
@@ -1206,7 +1215,7 @@ json_object* handle_delete_file(json_object *params, json_object *id) {
     if (remove(abs_path) != 0) {
         char msg[256];
         snprintf(msg, sizeof(msg), "Delete failed: %s", strerror(errno));
-        send_json_rpc_error(id, -32603, msg);
+        send_tool_error(id, -32603, msg, TOOL_RESULT_UNKNOWN);
         return NULL;
     }
 
@@ -1257,8 +1266,10 @@ json_object* handle_copy_file(json_object *params, json_object *id) {
         send_json_rpc_error(id, -32603, "Destination directory does not exist or path is invalid");
         return NULL;
     }
-    if (atomic_copy_file(resolved_source, resolved_destination) != 0) {
-        send_json_rpc_error(id, -32603, errno == EEXIST ? "Destination file already exists" : "File copy failed");
+    ToolResultType result_type;
+    if (atomic_copy_file_result(resolved_source, resolved_destination, &result_type) != 0) {
+        send_tool_error(id, -32603, errno == EEXIST ? "Destination file already exists" : "File copy failed",
+                        result_type);
         return NULL;
     }
     

@@ -439,13 +439,14 @@ static json_object* load_tag_file(int *error_code) {
 }
 
 /* Configured tag database file, relative to the MCP root. */
-static int save_tag_file(json_object *tag_data) {
+static int save_tag_file(json_object *tag_data, ToolResultType *result_type) {
+    *result_type = TOOL_RESULT_PENDING;
     char tag_file_path[MAX_PATH_LENGTH];
     if (resolve_mcp_path(tag_file_path, sizeof(tag_file_path), g_tag_file_path) != 0) {
         return -32603;
     }
     const char *str = json_object_to_json_string_ext(tag_data, JSON_C_TO_STRING_PRETTY);
-    return atomic_write_file(tag_file_path, str, strlen(str)) == 0 ? 0 : -32603;
+    return atomic_write_file_result(tag_file_path, str, strlen(str), result_type) == 0 ? 0 : -32603;
 }
 
 /* _tags_index の再構築 */
@@ -678,11 +679,12 @@ json_object* handle_tag_file(json_object *params, json_object *id) {
     rebuild_tags_index(tag_data);
     
     // ファイル書き込み
-    int save_err = save_tag_file(tag_data);
+    ToolResultType result_type;
+    int save_err = save_tag_file(tag_data, &result_type);
     if (save_err != 0) {
         json_object_put(tag_data);
         free(tag_names);
-        send_json_rpc_error(id, -32603, "Cannot write tag file");
+        send_tool_error(id, -32603, "Cannot write tag file", result_type);
         return NULL;
     }
     
@@ -693,7 +695,7 @@ json_object* handle_tag_file(json_object *params, json_object *id) {
         if (tag_len > SIZE_MAX - display_len - (i > 0 ? 2 : 0)) {
             json_object_put(tag_data);
             free(tag_names);
-            send_json_rpc_error(id, -32603, "Tag list is too large");
+            send_tool_error(id, -32603, "Tag list is too large", TOOL_RESULT_COMPLETE);
             return NULL;
         }
         display_len += tag_len + (i > 0 ? 2 : 0);
@@ -702,7 +704,7 @@ json_object* handle_tag_file(json_object *params, json_object *id) {
     if (!tags_display) {
         json_object_put(tag_data);
         free(tag_names);
-        send_json_rpc_error(id, -32603, "Memory allocation failed");
+        send_tool_error(id, -32603, "Memory allocation failed", TOOL_RESULT_COMPLETE);
         return NULL;
     }
     tags_display[0] = '\0';
@@ -728,7 +730,7 @@ json_object* handle_tag_file(json_object *params, json_object *id) {
         free(tag_names);
         free(tags_display);
         json_object_put(tag_data);
-        send_json_rpc_error(id, -32603, "Memory allocation failed");
+        send_tool_error(id, -32603, "Memory allocation failed", TOOL_RESULT_COMPLETE);
         return NULL;
     }
     snprintf(msg, msg_len, "%s%s%s%s)", msg_prefix, abs_path, msg_middle, tags_display);
@@ -823,10 +825,11 @@ json_object* handle_batch_tag_file(json_object *params, json_object *id) {
     }
 
     rebuild_tags_index(tag_data);
-    if (save_tag_file(tag_data) != 0) {
+    ToolResultType result_type;
+    if (save_tag_file(tag_data, &result_type) != 0) {
         json_object_put(results);
         json_object_put(tag_data);
-        send_json_rpc_error(id, -32603, "Cannot write tag file");
+        send_tool_error(id, -32603, "Cannot write tag file", result_type);
         return NULL;
     }
     json_object_put(tag_data);
@@ -840,6 +843,7 @@ json_object* handle_batch_tag_file(json_object *params, json_object *id) {
 }
 
 json_object* handle_get_tags(json_object *params, json_object *id) {
+    ToolResultType result_type = TOOL_RESULT_PENDING;
     json_object *type_obj = json_object_object_get(params, "type");
     if (!json_object_is_type(type_obj, json_type_string)) {
         send_json_rpc_error(id, -32602, "Invalid parameters: type is required");
@@ -867,9 +871,9 @@ json_object* handle_get_tags(json_object *params, json_object *id) {
             send_json_rpc_error(id, -32603, "Cannot read tag file");
             return NULL;
         }
-        if (load_err == 1 && save_tag_file(tag_data) != 0) {
+        if (load_err == 1 && save_tag_file(tag_data, &result_type) != 0) {
             json_object_put(tag_data);
-            send_json_rpc_error(id, -32603, "Cannot write tag file");
+            send_tool_error(id, -32603, "Cannot write tag file", result_type);
             return NULL;
         }
         json_object *files = json_object_object_get(tag_data, "files");
@@ -881,7 +885,7 @@ json_object* handle_get_tags(json_object *params, json_object *id) {
         if (!joined) {
             json_object_put(returned_tags);
             json_object_put(tag_data);
-            send_json_rpc_error(id, -32603, "Memory allocation failed");
+            send_tool_error(id, -32603, "Memory allocation failed", result_type);
             return NULL;
         }
         size_t msg_len = strlen("Tags for : ") + strlen(abs_path) + strlen(joined) + 1;
@@ -890,7 +894,7 @@ json_object* handle_get_tags(json_object *params, json_object *id) {
             free(joined);
             json_object_put(returned_tags);
             json_object_put(tag_data);
-            send_json_rpc_error(id, -32603, "Memory allocation failed");
+            send_tool_error(id, -32603, "Memory allocation failed", result_type);
             return NULL;
         }
         snprintf(msg, msg_len, "Tags for %s: %s", abs_path, joined);
@@ -916,9 +920,9 @@ json_object* handle_get_tags(json_object *params, json_object *id) {
             send_json_rpc_error(id, -32603, "Cannot read tag file");
             return NULL;
         }
-        if (load_err == 1 && save_tag_file(tag_data) != 0) {
+        if (load_err == 1 && save_tag_file(tag_data, &result_type) != 0) {
             json_object_put(tag_data);
-            send_json_rpc_error(id, -32603, "Cannot write tag file");
+            send_tool_error(id, -32603, "Cannot write tag file", result_type);
             return NULL;
         }
         json_object *index = json_object_object_get(tag_data, "_tags_index");
@@ -929,7 +933,7 @@ json_object* handle_get_tags(json_object *params, json_object *id) {
         if (!joined) {
             json_object_put(returned_files);
             json_object_put(tag_data);
-            send_json_rpc_error(id, -32603, "Memory allocation failed");
+            send_tool_error(id, -32603, "Memory allocation failed", result_type);
             return NULL;
         }
         size_t msg_len = strlen("Files with tag '': ") + strlen(normalized_tag) + strlen(joined) + 1;
@@ -938,7 +942,7 @@ json_object* handle_get_tags(json_object *params, json_object *id) {
             free(joined);
             json_object_put(returned_files);
             json_object_put(tag_data);
-            send_json_rpc_error(id, -32603, "Memory allocation failed");
+            send_tool_error(id, -32603, "Memory allocation failed", result_type);
             return NULL;
         }
         snprintf(msg, msg_len, "Files with tag '%s': %s", normalized_tag, joined);
@@ -1011,9 +1015,10 @@ json_object* handle_delete_tag(json_object *params, json_object *id) {
         else update_tag_metadata(file_obj);
     }
     rebuild_tags_index(tag_data);
-    if (save_tag_file(tag_data) != 0) {
+    ToolResultType result_type;
+    if (save_tag_file(tag_data, &result_type) != 0) {
         json_object_put(tag_data);
-        send_json_rpc_error(id, -32603, "Cannot write tag file");
+        send_tool_error(id, -32603, "Cannot write tag file", result_type);
         return NULL;
     }
 
@@ -1032,7 +1037,7 @@ json_object* handle_delete_tag(json_object *params, json_object *id) {
     if (!msg || (!strcmp(type, "file") && !removed) || !remaining_text) {
         free(msg); free(removed); free(remaining_text);
         json_object_put(remaining); json_object_put(tag_data);
-        send_json_rpc_error(id, -32603, "Memory allocation failed");
+        send_tool_error(id, -32603, "Memory allocation failed", TOOL_RESULT_COMPLETE);
         return NULL;
     }
     if (!strcmp(type, "all_tags")) snprintf(msg, msg_len, "All tags removed from %s", abs_path);
@@ -1202,7 +1207,7 @@ json_object* handle_download_file(json_object *params, json_object *id) {
         }
         if (mcp_file_replace(temp_path, abs_path) != 0) {
             unlink(temp_path);
-            send_json_rpc_error(id, -32603, "Cannot replace destination file");
+            send_tool_error(id, -32603, "Cannot replace destination file", TOOL_RESULT_UNKNOWN);
             return NULL;
         }
     } else {
@@ -1229,7 +1234,7 @@ json_object* handle_download_file(json_object *params, json_object *id) {
     if (!success_msg) {
         json_object_put(content_array);
         json_object_put(result);
-        send_json_rpc_error(id, -32603, "Memory allocation failed");
+        send_tool_error(id, -32603, "Memory allocation failed", TOOL_RESULT_COMPLETE);
         return NULL;
     }
     snprintf(success_msg, success_len, "File downloaded successfully: %s (size: %ld bytes)", display_path, file_size);

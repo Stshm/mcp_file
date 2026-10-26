@@ -115,7 +115,7 @@ static char *windows_oem_output_to_utf8(const unsigned char *data, size_t length
 
 static int run_command_process(const char *command, const char *working_directory,
                                int timeout_seconds, CommandOutput *output,
-                               int *exit_code, int *timed_out) {
+                               int *exit_code, int *timed_out, ToolResultType *outcome) {
     wchar_t *wide_command = cmd_utf8_to_wide(command, 0);
     wchar_t *wide_directory = cmd_utf8_to_wide(working_directory, 1);
     if (!wide_command || !wide_directory) {
@@ -209,6 +209,7 @@ static int run_command_process(const char *command, const char *working_director
         CloseHandle(process.hThread); CloseHandle(process.hProcess);
         CloseHandle(read_pipe); CloseHandle(job); errno = EIO; return -1;
     }
+    *outcome = TOOL_RESULT_UNKNOWN;
     CloseHandle(process.hThread);
 
     ULONGLONG deadline = GetTickCount64() + (ULONGLONG)timeout_seconds * 1000ULL;
@@ -223,7 +224,7 @@ static int run_command_process(const char *command, const char *working_director
             append_command_output(output, buffer, received);
         }
         if (WaitForSingleObject(process.hProcess, 20) == WAIT_OBJECT_0) {
-            GetExitCodeProcess(process.hProcess, &code);
+            if (GetExitCodeProcess(process.hProcess, &code)) *outcome = TOOL_RESULT_COMPLETE;
             /* Stop descendants that outlived cmd.exe and still own the pipe. */
             TerminateJobObject(job, code);
             break;
@@ -253,7 +254,7 @@ static int64_t monotonic_milliseconds(void) {
 
 static int run_command_process(const char *command, const char *working_directory,
                                int timeout_seconds, CommandOutput *output,
-                               int *exit_code, int *timed_out) {
+                               int *exit_code, int *timed_out, ToolResultType *outcome) {
     int descriptors[2];
     if (pipe(descriptors) != 0) return -1;
     if (fcntl(descriptors[0], F_SETFL, fcntl(descriptors[0], F_GETFL) | O_NONBLOCK) < 0) {
@@ -273,6 +274,7 @@ static int run_command_process(const char *command, const char *working_director
         execl("/bin/sh", "sh", "-c", command, (char *)NULL);
         _exit(127);
     }
+    *outcome = TOOL_RESULT_UNKNOWN;
     close(descriptors[1]);
     setpgid(child, child);
     int status = 0, child_done = 0;
@@ -305,7 +307,10 @@ static int run_command_process(const char *command, const char *working_director
     }
     close(descriptors[0]);
     if (*timed_out) *exit_code = 124;
-    else if (WIFEXITED(status)) *exit_code = WEXITSTATUS(status);
+    else if (WIFEXITED(status)) {
+        *exit_code = WEXITSTATUS(status);
+        *outcome = TOOL_RESULT_COMPLETE;
+    }
     else if (WIFSIGNALED(status)) *exit_code = 128 + WTERMSIG(status);
     else *exit_code = 1;
     return 0;
@@ -353,10 +358,11 @@ json_object* handle_run_cmd(json_object *params, json_object *id) {
         return NULL;
     }
     int exit_code = 1, timed_out = 0;
+    ToolResultType outcome = TOOL_RESULT_PENDING;
     if (run_command_process(command, working_directory, timeout_seconds,
-                            &output, &exit_code, &timed_out) != 0) {
+                            &output, &exit_code, &timed_out, &outcome) != 0) {
         free(output.data);
-        send_json_rpc_error(id, -32603, "Cannot start command process");
+        send_tool_error(id, -32603, "Cannot start command process", outcome);
         return NULL;
     }
 
@@ -392,7 +398,7 @@ json_object* handle_run_cmd(json_object *params, json_object *id) {
             char *encoded = malloc(encoded_size);
             if (!encoded) {
                 json_object_put(summary); free(output.data);
-                send_json_rpc_error(id, -32603, "Cannot encode command output");
+                send_tool_error(id, -32603, "Cannot encode command output", outcome);
                 return NULL;
             }
             base64_encode((const char *)output.data, output.length, encoded);
@@ -411,6 +417,8 @@ json_object* handle_run_cmd(json_object *params, json_object *id) {
     json_object_array_add(content, item);
     json_object *result = json_object_new_object();
     json_object_object_add(result, "content", content);
+    json_object_object_add(result, "resultType",
+                           json_object_new_string(tool_result_type_name(outcome)));
     json_object_put(summary);
     return result;
 }

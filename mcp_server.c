@@ -7,6 +7,24 @@
 
 static int g_initialize_responded = 0;
 static int g_initialized = 0;
+static int g_legacy_outcome_extension = 0;
+
+static int supports_outcome_extension(json_object *capabilities) {
+    json_object *extensions = json_object_object_get(capabilities, "extensions");
+    return json_object_is_type(extensions, json_type_object) &&
+        json_object_is_type(json_object_object_get(extensions, EXECUTION_OUTCOME_EXTENSION),
+                            json_type_object);
+}
+
+static json_object *make_server_capabilities(void) {
+    json_object *capabilities = json_object_new_object();
+    json_object_object_add(capabilities, "tools", json_object_new_object());
+    json_object_object_add(capabilities, "resources", json_object_new_object());
+    json_object *extensions = json_object_new_object();
+    json_object_object_add(extensions, EXECUTION_OUTCOME_EXTENSION, json_object_new_object());
+    json_object_object_add(capabilities, "extensions", extensions);
+    return capabilities;
+}
 
 static json_object *make_server_instructions(void) {
     const char *native_root = g_native_root_dir[0] ? g_native_root_dir : g_root_dir;
@@ -182,6 +200,10 @@ static const char *negotiate_version(json_object *client_info) {
 /* ==================== メインハンドラ ==================== */
 
 void handle_request(json_object *request) {
+    /* Response negotiation is per request; modern clients must never inherit
+     * extension support from a preceding request or a legacy session. */
+    g_tool_call_active = 0;
+    set_tool_result_extension_enabled(0);
     json_object *jsonrpc_obj = json_object_object_get(request, "jsonrpc");
     if (!jsonrpc_obj || !json_object_is_type(jsonrpc_obj, json_type_string) ||
         strcmp(json_object_get_string(jsonrpc_obj), "2.0") != 0) {
@@ -201,6 +223,32 @@ void handle_request(json_object *request) {
         return;
     }
 
+    int modern = 0;
+    json_object *meta = json_object_object_get(params, "_meta");
+    json_object *version = json_object_object_get(meta, "io.modelcontextprotocol/protocolVersion");
+    json_object *client_caps = json_object_object_get(meta, "io.modelcontextprotocol/clientCapabilities");
+    if (version || client_caps || !strcmp(method, "server/discover")) {
+        if (!json_object_is_type(version, json_type_string) ||
+            !json_object_is_type(client_caps, json_type_object)) {
+            send_json_rpc_error(id, -32602,
+                "Per-request protocolVersion and clientCapabilities are required");
+            return;
+        }
+        if (strcmp(json_object_get_string(version), "2026-07-28") != 0) {
+            json_object *data = json_object_new_object();
+            json_object *supported = json_object_new_array();
+            json_object_array_add(supported, json_object_new_string("2026-07-28"));
+            json_object_object_add(data, "supported", supported);
+            json_object_object_add(data, "requested", json_object_get(version));
+            send_json_rpc_error_data(id, -32022, "Unsupported per-request protocol version", data);
+            return;
+        }
+        modern = 1;
+        set_tool_result_extension_enabled(supports_outcome_extension(client_caps));
+    } else {
+        set_tool_result_extension_enabled(g_legacy_outcome_extension);
+    }
+
     fprintf(stderr, "[INFO] Client request: %s\n", method);
 
     // 通知（notifications/initialized, notifications/cancelled 等）にはレスポンスを返さない
@@ -213,27 +261,44 @@ void handle_request(json_object *request) {
         return;
     }
 
-    if (!strcmp(method, "initialize")) {
+    if (!strcmp(method, "server/discover")) {
+        json_object *result = json_object_new_object();
+        json_object *versions = json_object_new_array();
+        for (int i = 0; supported_versions[i]; i++) {
+            json_object_array_add(versions, json_object_new_string(supported_versions[i]));
+        }
+        json_object_object_add(result, "supportedVersions", versions);
+        json_object_object_add(result, "capabilities", make_server_capabilities());
+        json_object_object_add(result, "ttlMs", json_object_new_int(0));
+        json_object_object_add(result, "cacheScope", json_object_new_string("private"));
+        json_object *response_meta = json_object_new_object();
+        json_object *info = json_object_new_object();
+        json_object_object_add(info, "name", json_object_new_string("mcp-c-server"));
+        json_object_object_add(info, "version", json_object_new_string("1.0.0"));
+        json_object_object_add(response_meta, "io.modelcontextprotocol/serverInfo", info);
+        json_object_object_add(result, "_meta", response_meta);
+        json_object *instructions = make_server_instructions();
+        if (instructions) json_object_object_add(result, "instructions", instructions);
+        send_json_rpc_response(id, result);
+    } else if (!strcmp(method, "initialize")) {
+        if (modern) {
+            send_json_rpc_error(id, -32601, "initialize is only supported for legacy clients");
+            return;
+        }
         if (g_initialize_responded) {
             send_json_rpc_error(id, -32600, "Invalid Request: initialize was already completed");
             return;
         }
         // バージョンネゴシエーション
         const char *version = negotiate_version(params);
+        g_legacy_outcome_extension = supports_outcome_extension(
+            json_object_object_get(params, "capabilities"));
+        set_tool_result_extension_enabled(g_legacy_outcome_extension);
         
         json_object *result = json_object_new_object();
         json_object_object_add(result, "protocolVersion", json_object_new_string(version));
         
-        json_object *capabilities = json_object_new_object();
-
-        /*
-         * MCP capabilities are objects, not booleans.  Advertising these
-         * capabilities lets the client request tools/list and resources/list.
-         * This server does not emit list-changed notifications or implement
-         * resource subscriptions, so no optional flags are declared.
-         */
-        json_object_object_add(capabilities, "tools", json_object_new_object());
-        json_object_object_add(capabilities, "resources", json_object_new_object());
+        json_object *capabilities = make_server_capabilities();
         json_object_object_add(result, "capabilities", capabilities);
 
         // サーバー情報にバージョンを含める
@@ -259,7 +324,7 @@ void handle_request(json_object *request) {
         
     } else if (!strcmp(method, "ping")) {
         send_json_rpc_response(id, json_object_new_object());
-    } else if (!g_initialized && strcmp(method, "ping") != 0) {
+    } else if (!modern && !g_initialized && strcmp(method, "ping") != 0) {
         send_json_rpc_error(id, -32002, "Server is not initialized");
     } else if (!strcmp(method, "tools/list")) {
         // MCP 2025-11-25 Spec: {"tools": [...]} 形式

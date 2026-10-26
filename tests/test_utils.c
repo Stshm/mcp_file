@@ -33,6 +33,7 @@ const char *supported_versions[] = {
 void setUp(void) {
     snprintf(g_native_root_dir, sizeof(g_native_root_dir), "%s", "/native/test-root");
     g_tool_call_active = 0;
+    set_tool_result_extension_enabled(0);
     g_max_read_file_size = DEFAULT_MAX_READ_FILE_SIZE;
     g_max_download_file_size = DEFAULT_MAX_DOWNLOAD_FILE_SIZE;
     g_download_timeout_seconds = DEFAULT_DOWNLOAD_TIMEOUT_SECONDS;
@@ -258,6 +259,7 @@ void test_create_directory_failure_emits_one_error_response(void) {
     json_object *id = json_object_new_int(77);
     json_object *handler_result = NULL;
     g_tool_call_active = 1;
+    set_tool_result_extension_enabled(1);
 
     char *output = capture_stdout_for_handler(handle_create_directory, params, id,
                                                &handler_result);
@@ -270,6 +272,7 @@ void test_create_directory_failure_emits_one_error_response(void) {
     TEST_ASSERT_NOT_NULL(response);
     json_object *result = json_object_object_get(response, "result");
     TEST_ASSERT_TRUE(json_object_get_boolean(json_object_object_get(result, "isError")));
+    TEST_ASSERT_EQUAL_STRING("pending", json_object_get_string(json_object_object_get(result, "resultType")));
     TEST_ASSERT_NOT_NULL(strstr(output, "path already exists"));
     TEST_ASSERT_NULL(strstr(output, "created successfully"));
 
@@ -292,6 +295,9 @@ void test_read_file_schema_declares_utf8_only(void) {
     json_object *initialize_response = json_tokener_parse(initialize_output);
     TEST_ASSERT_NOT_NULL(initialize_response);
     json_object *initialize_result = json_object_object_get(initialize_response, "result");
+    TEST_ASSERT_TRUE(json_object_is_type(json_object_object_get(
+        json_object_object_get(json_object_object_get(initialize_result, "capabilities"), "extensions"),
+        EXECUTION_OUTCOME_EXTENSION), json_type_object));
     const char *instructions = json_object_get_string(
         json_object_object_get(initialize_result, "instructions"));
     TEST_ASSERT_NOT_NULL(instructions);
@@ -826,6 +832,250 @@ static json_object *make_edit_params(const char *old_content, const char *new_co
     return params;
 }
 
+static json_object *make_modern_meta(int extension_enabled) {
+    json_object *meta = json_object_new_object();
+    json_object_object_add(meta, "io.modelcontextprotocol/protocolVersion",
+                           json_object_new_string("2026-07-28"));
+    json_object *capabilities = json_object_new_object();
+    if (extension_enabled) {
+        json_object *extensions = json_object_new_object();
+        json_object_object_add(extensions, EXECUTION_OUTCOME_EXTENSION, json_object_new_object());
+        json_object_object_add(capabilities, "extensions", extensions);
+    }
+    json_object_object_add(meta, "io.modelcontextprotocol/clientCapabilities", capabilities);
+    return meta;
+}
+
+static json_object *call_tool_fixture_with_capabilities(const char *name, json_object *arguments,
+                                                       int extension_enabled) {
+    json_object *request = json_object_new_object();
+    json_object_object_add(request, "jsonrpc", json_object_new_string("2.0"));
+    json_object_object_add(request, "id", json_object_new_int(92));
+    json_object_object_add(request, "method", json_object_new_string("tools/call"));
+    json_object *params = json_object_new_object();
+    json_object_object_add(params, "name", json_object_new_string(name));
+    json_object_object_add(params, "arguments", json_object_get(arguments));
+    if (extension_enabled >= 0) {
+        json_object_object_add(params, "_meta", make_modern_meta(extension_enabled));
+    }
+    json_object_object_add(request, "params", params);
+    char *output = capture_stdout_for_request(request);
+    json_object *response = json_tokener_parse(output);
+    TEST_ASSERT_NOT_NULL(response);
+    const char *end = strchr(output, '\n');
+    TEST_ASSERT_NOT_NULL(end);
+    TEST_ASSERT_EQUAL_STRING("", end + 1);
+    free(output);
+    json_object_put(request);
+    return response;
+}
+
+static json_object *call_tool_fixture(const char *name, json_object *arguments) {
+    return call_tool_fixture_with_capabilities(name, arguments, 1);
+}
+
+static void assert_tool_outcome(json_object *response, const char *type, int is_error) {
+    TEST_ASSERT_NULL(json_object_object_get(response, "error"));
+    json_object *result = json_object_object_get(response, "result");
+    TEST_ASSERT_NOT_NULL(result);
+    TEST_ASSERT_EQUAL_STRING(type, json_object_get_string(json_object_object_get(result, "resultType")));
+    TEST_ASSERT_EQUAL_INT(is_error, json_object_get_boolean(json_object_object_get(result, "isError")));
+}
+
+void test_outcome_extension_discovery_and_request_scoped_negotiation(void) {
+    json_object *request = json_object_new_object();
+    json_object_object_add(request, "jsonrpc", json_object_new_string("2.0"));
+    json_object_object_add(request, "id", json_object_new_int(93));
+    json_object_object_add(request, "method", json_object_new_string("server/discover"));
+    json_object *params = json_object_new_object();
+    json_object_object_add(params, "_meta", make_modern_meta(0));
+    json_object_object_add(request, "params", params);
+    char *output = capture_stdout_for_request(request);
+    json_object *response = json_tokener_parse(output);
+    TEST_ASSERT_NOT_NULL(response);
+    assert_tool_outcome(response, "complete", 0);
+    json_object *result = json_object_object_get(response, "result");
+    json_object *extensions = json_object_object_get(
+        json_object_object_get(result, "capabilities"), "extensions");
+    TEST_ASSERT_TRUE(json_object_is_type(
+        json_object_object_get(extensions, EXECUTION_OUTCOME_EXTENSION), json_type_object));
+    json_object_put(response);
+    free(output);
+
+    json_object *meta = json_object_object_get(params, "_meta");
+    json_object_object_del(meta, "io.modelcontextprotocol/clientCapabilities");
+    output = capture_stdout_for_request(request);
+    response = json_tokener_parse(output);
+    TEST_ASSERT_EQUAL_INT(-32602, json_object_get_int(json_object_object_get(
+        json_object_object_get(response, "error"), "code")));
+    json_object_put(response);
+    free(output);
+    json_object_object_add(meta, "io.modelcontextprotocol/clientCapabilities", json_object_new_object());
+    json_object_object_add(meta, "io.modelcontextprotocol/protocolVersion", json_object_new_string("2099-01-01"));
+    output = capture_stdout_for_request(request);
+    response = json_tokener_parse(output);
+    json_object *error = json_object_object_get(response, "error");
+    TEST_ASSERT_EQUAL_INT(-32022, json_object_get_int(json_object_object_get(error, "code")));
+    TEST_ASSERT_NOT_NULL(json_object_object_get(json_object_object_get(error, "data"), "supported"));
+    json_object_put(response);
+    free(output);
+    json_object_put(request);
+
+    /* This test runs before legacy initialize: modern tool calls need no
+     * handshake, and an opt-in must not carry over to a later core-only call. */
+    json_object *args = json_object_new_object();
+    json_object_object_add(args, "path", json_object_new_string("/unused"));
+    json_object_object_add(args, "start_line", json_object_new_int(1));
+    json_object_object_add(args, "end_line", json_object_new_int(1));
+    json_object_object_add(args, "new_content", json_object_new_string(""));
+    response = call_tool_fixture_with_capabilities("edit_file", args, 1);
+    assert_tool_outcome(response, "pending", 1);
+    json_object_put(response);
+    response = call_tool_fixture_with_capabilities("edit_file", args, 0);
+    assert_tool_outcome(response, "complete", 1);
+    json_object_put(response);
+    json_object_put(args);
+}
+
+static json_object *emit_completed_tool_error(json_object *params, json_object *id) {
+    (void)params;
+    send_tool_error(id, -32603, "Operation committed; response formatting failed", TOOL_RESULT_COMPLETE);
+    return NULL;
+}
+
+void test_completed_tool_error_does_not_become_pending(void) {
+    json_object *id = json_object_new_int(94);
+    json_object *handler_result = NULL;
+    g_tool_call_active = 1;
+    set_tool_result_extension_enabled(1);
+    char *output = capture_stdout_for_handler(emit_completed_tool_error, NULL, id, &handler_result);
+    g_tool_call_active = 0;
+    TEST_ASSERT_NULL(handler_result);
+    json_object *response = json_tokener_parse(output);
+    TEST_ASSERT_NOT_NULL(response);
+    assert_tool_outcome(response, "complete", 1);
+    json_object_put(response);
+    json_object_put(id);
+    free(output);
+}
+
+void test_tool_result_type_tracks_execution_and_keeps_protocol_errors_separate(void) {
+    char root[] = "/tmp/mcp-result-type-XXXXXX";
+    TEST_ASSERT_NOT_NULL(mkdtemp(root));
+    char previous_root[MAX_PATH_LENGTH];
+    snprintf(previous_root, sizeof(previous_root), "%s", g_root_dir);
+    snprintf(g_root_dir, sizeof(g_root_dir), "%s", root);
+    json_object *args = json_object_new_object();
+    json_object_object_add(args, "path", json_object_new_string("/sample.txt"));
+    json_object_object_add(args, "content", json_object_new_string("first\nsecond"));
+    json_object *response = call_tool_fixture("write_file", args);
+    assert_tool_outcome(response, "complete", 0);
+    json_object_put(response);
+
+    json_object *edit_args = make_edit_params("second\n", "changed\n");
+    response = call_tool_fixture("edit_file", edit_args);
+    assert_tool_outcome(response, "pending", 1);
+    json_object_put(response);
+
+    response = call_tool_fixture_with_capabilities("edit_file", edit_args, 0);
+    assert_tool_outcome(response, "complete", 1);
+    json_object_put(response);
+    response = call_tool_fixture_with_capabilities("edit_file", edit_args, -1);
+    assert_tool_outcome(response, "complete", 1);
+    json_object_put(response);
+    json_object_put(edit_args);
+
+    json_object_object_add(args, "path", json_object_new_string("/missing/sample.txt"));
+    response = call_tool_fixture("write_file", args);
+    assert_tool_outcome(response, "pending", 1);
+    json_object_put(response);
+
+    /* Replacing a directory reaches the publication syscall and fails. The
+     * conservative outcome is unknown; the caller must inspect before retry. */
+    char directory[MAX_PATH_LENGTH];
+    snprintf(directory, sizeof(directory), "%s/directory", root);
+    TEST_ASSERT_EQUAL_INT(0, mkdir(directory, 0700));
+    json_object_object_add(args, "path", json_object_new_string("/directory"));
+    response = call_tool_fixture("write_file", args);
+    assert_tool_outcome(response, "unknown", 1);
+    json_object_put(response);
+    response = call_tool_fixture_with_capabilities("write_file", args, 0);
+    assert_tool_outcome(response, "complete", 1);
+    json_object_put(response);
+
+    json_object_object_add(args, "path", json_object_new_string("/sample.txt"));
+    response = call_tool_fixture("read_file", args);
+    assert_tool_outcome(response, "complete", 0);
+    json_object_put(response);
+    json_object_put(args);
+
+    /* Validation errors before handler dispatch retain JSON-RPC error shape. */
+    args = json_object_new_object();
+    response = call_tool_fixture("write_file", args);
+    TEST_ASSERT_NULL(json_object_object_get(response, "result"));
+    TEST_ASSERT_EQUAL_INT(-32602, json_object_get_int(json_object_object_get(
+        json_object_object_get(response, "error"), "code")));
+    json_object_put(response);
+    json_object_put(args);
+
+    args = json_object_new_object();
+    json_object_object_add(args, "command", json_object_new_string("printf started > started.txt; sleep 2"));
+    json_object_object_add(args, "timeout_seconds", json_object_new_int(1));
+    response = call_tool_fixture("run_cmd", args);
+    assert_tool_outcome(response, "unknown", 0);
+    json_object_put(response);
+
+    json_object_object_add(args, "command", json_object_new_string("exit 7"));
+    response = call_tool_fixture("run_cmd", args);
+    assert_tool_outcome(response, "complete", 0);
+    json_object_put(response);
+    json_object_object_add(args, "command", json_object_new_string("kill -TERM $$"));
+    response = call_tool_fixture("run_cmd", args);
+    assert_tool_outcome(response, "unknown", 0);
+    json_object_put(response);
+    json_object_put(args);
+
+    char path[MAX_PATH_LENGTH];
+    snprintf(path, sizeof(path), "%s/started.txt", root);
+    TEST_ASSERT_EQUAL_INT(0, access(path, F_OK));
+    TEST_ASSERT_EQUAL_INT(0, unlink(path));
+    snprintf(path, sizeof(path), "%s/sample.txt", root);
+    FILE *fp = fopen(path, "rb");
+    TEST_ASSERT_NOT_NULL(fp);
+    char actual[32] = {0};
+    TEST_ASSERT_EQUAL_UINT(12, fread(actual, 1, sizeof(actual), fp));
+    TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+    TEST_ASSERT_EQUAL_STRING("first\nsecond", actual);
+    TEST_ASSERT_EQUAL_INT(0, unlink(path));
+    TEST_ASSERT_EQUAL_INT(0, rmdir(directory));
+    TEST_ASSERT_EQUAL_INT(0, rmdir(root));
+    snprintf(g_root_dir, sizeof(g_root_dir), "%s", previous_root);
+}
+
+void test_atomic_file_outcomes_distinguish_preparation_and_publication(void) {
+    char root[] = "/tmp/mcp-atomic-outcome-XXXXXX";
+    TEST_ASSERT_NOT_NULL(mkdtemp(root));
+    char path[MAX_PATH_LENGTH];
+    ToolResultType outcome = TOOL_RESULT_UNKNOWN;
+    snprintf(path, sizeof(path), "%s/missing/file", root);
+    TEST_ASSERT_EQUAL_INT(-1, atomic_write_file_result(path, "value", 5, &outcome));
+    TEST_ASSERT_EQUAL_INT(TOOL_RESULT_PENDING, outcome);
+    snprintf(path, sizeof(path), "%s/file", root);
+    TEST_ASSERT_EQUAL_INT(0, atomic_write_file_result(path, "value", 5, &outcome));
+    TEST_ASSERT_EQUAL_INT(TOOL_RESULT_COMPLETE, outcome);
+    char copy[MAX_PATH_LENGTH];
+    snprintf(copy, sizeof(copy), "%s/copy", root);
+    TEST_ASSERT_EQUAL_INT(0, atomic_copy_file_result(path, copy, &outcome));
+    TEST_ASSERT_EQUAL_INT(TOOL_RESULT_COMPLETE, outcome);
+    TEST_ASSERT_EQUAL_INT(-1, atomic_copy_file_result(path, copy, &outcome));
+    TEST_ASSERT_EQUAL_INT(TOOL_RESULT_PENDING, outcome);
+    TEST_ASSERT_EQUAL_INT(-1, atomic_write_file_result(root, "value", 5, &outcome));
+    TEST_ASSERT_EQUAL_INT(TOOL_RESULT_UNKNOWN, outcome);
+    TEST_ASSERT_EQUAL_INT(0, unlink(path));
+    TEST_ASSERT_EQUAL_INT(0, unlink(copy));
+    TEST_ASSERT_EQUAL_INT(0, rmdir(root));
+}
+
 void test_edit_file_reports_newline_and_partial_line_mismatches(void) {
     const struct {
         const char *file;
@@ -1142,7 +1392,11 @@ int main(void) {
     RUN_TEST(test_classify_search_entry_resolves_unknown_without_following_symlink);
     RUN_TEST(test_search_string_reports_incremental_line_numbers);
     RUN_TEST(test_create_directory_failure_emits_one_error_response);
+    RUN_TEST(test_outcome_extension_discovery_and_request_scoped_negotiation);
     RUN_TEST(test_read_file_schema_declares_utf8_only);
+    RUN_TEST(test_tool_result_type_tracks_execution_and_keeps_protocol_errors_separate);
+    RUN_TEST(test_atomic_file_outcomes_distinguish_preparation_and_publication);
+    RUN_TEST(test_completed_tool_error_does_not_become_pending);
     RUN_TEST(test_read_file_returns_non_utf8_text_as_base64);
     RUN_TEST(test_stat_file_reports_size_time_and_text_line_count);
     RUN_TEST(test_stat_file_reports_missing_and_permission_as_results);
