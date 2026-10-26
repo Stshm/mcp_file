@@ -1026,6 +1026,28 @@ json_object* handle_edit_file(json_object *params, json_object *id) {
     } else if (target_start && normalized_old_content != NULL && old_len == 0) {
         // old_contentが空文字列の場合はマッチとみなす
     } else if (target_start && normalized_old_content != NULL && old_len > 0) {
+        size_t old_body_len = old_len;
+        size_t target_body_len = target_len;
+        while (old_body_len > 0 && normalized_old_content[old_body_len - 1] == '\n') old_body_len--;
+        while (target_body_len > 0 && target_start[target_body_len - 1] == '\n') target_body_len--;
+        if (old_body_len == target_body_len &&
+            memcmp(target_start, normalized_old_content, old_body_len) == 0) {
+            char msg[512];
+            snprintf(msg, sizeof(msg),
+                     "old_content trailing newline mismatch at lines %d-%d. "
+                     "old_content has %zu trailing newline(s); the selected file range has %zu. %s"
+                     "Add or remove trailing \\n in old_content to match the selected range; "
+                     "include_trailing_newline only affects hash verification.",
+                     start_line, end_line, old_len - old_body_len, target_len - target_body_len,
+                     target_start + target_len == normalized_content + normalized_length &&
+                         target_len > 0 && target_start[target_len - 1] != '\n'
+                         ? "The file has no newline at end of file. " : "");
+            free(normalized_old_content);
+            free(normalized_content);
+            free(file_content);
+            send_json_rpc_error(id, -32002, msg);
+            return NULL;
+        }
         char *match_pos = strstr(normalized_content, normalized_old_content);
         if (match_pos) {
             // マッチしたが、行番号が正しくない場合はエラーを返す（正しい行範囲を計算）
@@ -1035,10 +1057,17 @@ json_object* handle_edit_file(json_object *params, json_object *id) {
                                     &correct_start_line, &correct_end_line);
             
             char msg[MAX_PATH_LENGTH + 128];
-            snprintf(msg, sizeof(msg), 
+            if (correct_start_line == start_line && correct_end_line == end_line) {
+                snprintf(msg, sizeof(msg),
+                         "old_content matches only part of the selected file lines %d-%d. "
+                         "Use the complete content of these lines, including any blank lines "
+                         "and the intended trailing newline.", start_line, end_line);
+            } else {
+                snprintf(msg, sizeof(msg),
                      "old_content matches file content but at different line range. "
                      "Expected lines: %d-%d, Actual correct lines: %d-%d",
                      start_line, end_line, correct_start_line, correct_end_line);
+            }
 
             free(normalized_old_content);
             free(normalized_content);

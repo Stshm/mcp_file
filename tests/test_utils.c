@@ -826,6 +826,74 @@ static json_object *make_edit_params(const char *old_content, const char *new_co
     return params;
 }
 
+void test_edit_file_reports_newline_and_partial_line_mismatches(void) {
+    const struct {
+        const char *file;
+        const char *old;
+        const char *message;
+    } cases[] = {
+        {"first\nsecond\nthird\n", "second\n\n",
+         "old_content has 2 trailing newline(s); the selected file range has 1."},
+        {"first\nsecond", "second\n",
+         "The file has no newline at end of file."},
+        {"first\r\nsecond", "second\r\n",
+         "old_content has 1 trailing newline(s); the selected file range has 0."},
+        {"first\nsecond suffix\n", "second",
+         "old_content matches only part of the selected file lines 2-2."},
+        {"first\nsecond suffix\n", "suffix\n",
+         "old_content matches only part of the selected file lines 2-2."},
+        {"first\nsecond\nthird\n", "third\n",
+         "Expected lines: 2-2, Actual correct lines: 3-3"},
+        {"first\nsecond", "different\n",
+         "old_content does not match file content. Line numbers: 2-2"},
+    };
+    char root[] = "/tmp/mcp-edit-mismatch-XXXXXX";
+    TEST_ASSERT_NOT_NULL(mkdtemp(root));
+    char previous_root[MAX_PATH_LENGTH];
+    snprintf(previous_root, sizeof(previous_root), "%s", g_root_dir);
+    snprintf(g_root_dir, sizeof(g_root_dir), "%s", root);
+    char path[MAX_PATH_LENGTH];
+    snprintf(path, sizeof(path), "%s/sample.txt", root);
+    json_object *id = json_object_new_int(91);
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        FILE *fp = fopen(path, "wb");
+        TEST_ASSERT_NOT_NULL(fp);
+        size_t length = strlen(cases[i].file);
+        TEST_ASSERT_EQUAL_UINT(length, fwrite(cases[i].file, 1, length, fp));
+        TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+        json_object *params = make_edit_params(cases[i].old, "changed\n");
+        json_object *handler_result = NULL;
+        char *output = capture_stdout_for_handler(handle_edit_file, params, id,
+                                                   &handler_result);
+        TEST_ASSERT_NULL(handler_result);
+        json_object *response = json_tokener_parse(output);
+        TEST_ASSERT_NOT_NULL(response);
+        json_object *error = json_object_object_get(response, "error");
+        TEST_ASSERT_EQUAL_INT(-32002, json_object_get_int(json_object_object_get(error, "code")));
+        const char *message = json_object_get_string(json_object_object_get(error, "message"));
+        TEST_ASSERT_NOT_NULL(strstr(message, cases[i].message));
+        if (i < 3) {
+            TEST_ASSERT_NOT_NULL(strstr(message, "trailing newline mismatch at lines 2-2"));
+            TEST_ASSERT_NOT_NULL(strstr(message, "include_trailing_newline only affects hash verification"));
+        }
+        json_object_put(response);
+        json_object_put(params);
+        free(output);
+
+        char actual[128] = {0};
+        fp = fopen(path, "rb");
+        TEST_ASSERT_NOT_NULL(fp);
+        TEST_ASSERT_EQUAL_UINT(length, fread(actual, 1, sizeof(actual), fp));
+        TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+        TEST_ASSERT_EQUAL_STRING(cases[i].file, actual);
+    }
+    json_object_put(id);
+    TEST_ASSERT_EQUAL_INT(0, unlink(path));
+    TEST_ASSERT_EQUAL_INT(0, rmdir(root));
+    snprintf(g_root_dir, sizeof(g_root_dir), "%s", previous_root);
+}
+
 void test_edit_file_accepts_equivalent_line_endings_and_preserves_crlf(void) {
     char root[] = "/tmp/mcp-edit-crlf-XXXXXX";
     TEST_ASSERT_NOT_NULL(mkdtemp(root));
@@ -1080,6 +1148,7 @@ int main(void) {
     RUN_TEST(test_stat_file_reports_missing_and_permission_as_results);
     RUN_TEST(test_run_cmd_reports_output_exit_path_timeout_and_truncation);
     RUN_TEST(test_edit_file_accepts_equivalent_line_endings_and_preserves_crlf);
+    RUN_TEST(test_edit_file_reports_newline_and_partial_line_mismatches);
     RUN_TEST(test_hidden_directories_are_opt_in_for_tree_and_search);
     RUN_TEST(test_search_depth_and_timeout);
     RUN_TEST(test_search_preserves_utf8_at_chunk_boundary);
