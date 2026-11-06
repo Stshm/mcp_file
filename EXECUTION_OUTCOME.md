@@ -67,12 +67,12 @@ That opt-in applies to subsequent legacy requests on the stdio session only.
 `resultType` is a string directly inside the JSON-RPC `result` object, alongside
 `content`, `structuredContent` when present, and `isError` when present.
 It is independent of `isError`: a completed operation can still have an error
-in response formatting, while a command timeout can have an ordinary command
-summary with an uncertain execution outcome.
+in response formatting. A reported command timeout is `complete`: its command
+summary, including any captured output, lets the caller decide how to continue.
 
 | Value | Meaning with this extension enabled | Client action |
 | --- | --- | --- |
-| `complete` | Processing finished and its outcome is known. Includes reported nonzero command exits and known per-item batch failures. It does not mean every operation succeeded. | Consume the result. Inspect `isError` and tool-specific fields. |
+| `complete` | Processing finished and its result can be reported. Includes reported command timeouts, nonzero command exits, and known per-item batch failures. It does not mean every operation succeeded or can safely be repeated. | Consume the result. Inspect `isError` and tool-specific fields. |
 | `pending` | The requested operation has not committed a persistent change to its target, or a failed new-file creation was successfully rolled back. It is no longer executing. | Let the LLM correct the request or resolve the cause, then retry if appropriate. |
 | `unknown` | Execution/publication was attempted and the outcome cannot be guaranteed. A change may already have happened, or execution may have been interrupted after some side effects. | Inspect the target before retrying; do not blindly repeat a mutation. |
 
@@ -112,9 +112,13 @@ Example opted-in tool error:
   succeeded but building the response fails, the outcome is `complete`, with
   `isError: true`. Download destination replacement follows the same rule.
 - A command that fails before launch is `pending`. Once execution starts,
-  timeout, interrupted execution, or failure to recover its termination result
-  is `unknown`. A known normal exit is `complete`, including nonzero exit codes.
-  The existing command summary and `isError` behavior are preserved.
+  an interruption other than a reported timeout, or failure to recover its
+  termination result, is `unknown`. A known normal exit or reported timeout is
+  `complete`, including nonzero exit codes and timeouts with no output.
+  Timeouts retain `timed_out: true`, `exit_code: 124`, and any captured output.
+  The caller uses the command and these fields to decide what to do next; a
+  timeout does not imply that the command made no changes. The existing command
+  summary and `isError` behavior are preserved.
 - Best-effort edit-history failure does not undo an already completed edit.
 - A batch with known individual failures is `complete`; callers inspect its
   per-item results. An uncertain batch DB publication is `unknown`.

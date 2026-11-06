@@ -1019,11 +1019,27 @@ void test_tool_result_type_tracks_execution_and_keeps_protocol_errors_separate(v
     json_object_put(args);
 
     args = json_object_new_object();
-    json_object_object_add(args, "command", json_object_new_string("printf started > started.txt; sleep 2"));
     json_object_object_add(args, "timeout_seconds", json_object_new_int(1));
-    response = call_tool_fixture("run_cmd", args);
-    assert_tool_outcome(response, "unknown", 0);
-    json_object_put(response);
+    const char *timeout_commands[] = {
+        "printf started > started.txt; sleep 2",
+        "printf before-timeout; sleep 2"
+    };
+    for (size_t i = 0; i < sizeof(timeout_commands) / sizeof(timeout_commands[0]); i++) {
+        json_object_object_add(args, "command", json_object_new_string(timeout_commands[i]));
+        response = call_tool_fixture("run_cmd", args);
+        assert_tool_outcome(response, "complete", 0);
+        json_object *result = json_object_object_get(response, "result");
+        json_object *item = json_object_array_get_idx(json_object_object_get(result, "content"), 0);
+        json_object *summary = json_tokener_parse(
+            json_object_get_string(json_object_object_get(item, "text")));
+        TEST_ASSERT_NOT_NULL(summary);
+        TEST_ASSERT_TRUE(json_object_get_boolean(json_object_object_get(summary, "timed_out")));
+        TEST_ASSERT_EQUAL_INT(124, json_object_get_int(json_object_object_get(summary, "exit_code")));
+        TEST_ASSERT_EQUAL_STRING(i == 0 ? "" : "before-timeout",
+            json_object_get_string(json_object_object_get(summary, "output")));
+        json_object_put(summary);
+        json_object_put(response);
+    }
 
     json_object_object_add(args, "command", json_object_new_string("exit 7"));
     response = call_tool_fixture("run_cmd", args);

@@ -30,7 +30,8 @@ Responses include `resultType` directly inside `result`. When both peers adverti
 (`complete`), an operation that has not committed and can be corrected/retried
 (`pending`), and an uncertain outcome requiring inspection before retry (`unknown`).
 `isError` independently reports errors. Clients without the extension receive only
-core `complete`, without an additional safe-retry guarantee.
+core `complete`, without an additional safe-retry guarantee. Reported `run_cmd`
+timeouts are `complete`, with `timed_out` and any captured output preserved.
 See the [extension specification](EXECUTION_OUTCOME.md) for capability examples and classification rules.
 
 ## Build

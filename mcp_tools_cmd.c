@@ -365,6 +365,9 @@ json_object* handle_run_cmd(json_object *params, json_object *id) {
         send_tool_error(id, -32603, "Cannot start command process", outcome);
         return NULL;
     }
+    /* A reported timeout is a final command result. The caller can use the
+     * captured output and timed_out flag to decide how to continue. */
+    if (timed_out) outcome = TOOL_RESULT_COMPLETE;
 
     json_object *summary = json_object_new_object();
     json_object_object_add(summary, "path", json_object_new_string(path));
